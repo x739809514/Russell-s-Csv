@@ -1,0 +1,155 @@
+Launching CSV-IDE at Fri 16 Jan 2026 18:24:19 GMT
+qt.core.plugin.factoryloader: checking directory path "/Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/platforms" ...
+qt.core.plugin.factoryloader: looking at "libqoffscreen.dylib"
+qt.core.plugin.loader: Found metadata in lib /Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/platforms/libqoffscreen.dylib, metadata=
+{
+    "IID": "org.qt-project.Qt.QPA.QPlatformIntegrationFactoryInterface.5.3",
+    "MetaData": {
+        "Keys": [
+            "offscreen"
+        ]
+    },
+    "archlevel": 0,
+    "className": "QOffscreenIntegrationPlugin",
+    "debug": false,
+    "version": 395776
+}
+
+
+qt.core.plugin.factoryloader: Got keys from plugin meta data QList("offscreen")
+qt.core.plugin.factoryloader: looking at "libqminimal.dylib"
+qt.core.plugin.loader: Found metadata in lib /Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/platforms/libqminimal.dylib, metadata=
+{
+    "IID": "org.qt-project.Qt.QPA.QPlatformIntegrationFactoryInterface.5.3",
+    "MetaData": {
+        "Keys": [
+            "minimal"
+        ]
+    },
+    "archlevel": 0,
+    "className": "QMinimalIntegrationPlugin",
+    "debug": false,
+    "version": 395776
+}
+
+
+qt.core.plugin.factoryloader: Got keys from plugin meta data QList("minimal")
+qt.core.plugin.factoryloader: looking at "libqcocoa.dylib"
+qt.core.plugin.loader: Found metadata in lib /Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/platforms/libqcocoa.dylib, metadata=
+{
+    "IID": "org.qt-project.Qt.QPA.QPlatformIntegrationFactoryInterface.5.3",
+    "MetaData": {
+        "Keys": [
+            "cocoa"
+        ]
+    },
+    "archlevel": 0,
+    "className": "QCocoaIntegrationPlugin",
+    "debug": false,
+    "version": 395776
+}
+
+
+qt.core.plugin.factoryloader: Got keys from plugin meta data QList("cocoa")
+qt.core.plugin.factoryloader: checking directory path "/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/platforms" ...
+qt.core.library: "/Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/platforms/libqcocoa.dylib" loaded library
+qt.core.plugin.factoryloader: checking directory path "/Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/platformthemes" ...
+qt.core.plugin.factoryloader: checking directory path "/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/platformthemes" ...
+qt.core.plugin.factoryloader: checking directory path "/Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/styles" ...
+qt.core.plugin.factoryloader: looking at "libqmacstyle.dylib"
+qt.core.plugin.loader: Found metadata in lib /Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/styles/libqmacstyle.dylib, metadata=
+{
+    "IID": "org.qt-project.Qt.QStyleFactoryInterface",
+    "MetaData": {
+        "Keys": [
+            "macOS"
+        ]
+    },
+    "archlevel": 0,
+    "className": "QMacStylePlugin",
+    "debug": false,
+    "version": 395776
+}
+
+
+qt.core.plugin.factoryloader: Got keys from plugin meta data QList("macos")
+qt.core.plugin.factoryloader: checking directory path "/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/styles" ...
+qt.core.library: "/Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/styles/libqmacstyle.dylib" loaded library
+/Users/innovation/csv-ide/CSV-IDE.command: line 28: 52114 Terminated: 15          QT_DEBUG_PLUGINS=1 "$PYTHON_BIN" -u "$ROOT_DIR/main.py"
+Launching CSV-IDE at Fri 16 Jan 2026 18:27:14 GMT
+qt.core.plugin.factoryloader: checking directory path "/Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/platforms" ...
+qt.core.plugin.factoryloader: looking at "libqoffscreen.dylib"
+qt.core.plugin.loader: Found metadata in lib /Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/platforms/libqoffscreen.dylib, metadata=
+{
+    "IID": "org.qt-project.Qt.QPA.QPlatformIntegrationFactoryInterface.5.3",
+    "MetaData": {
+        "Keys": [
+            "offscreen"
+        ]
+    },
+    "archlevel": 0,
+    "className": "QOffscreenIntegrationPlugin",
+    "debug": false,
+    "version": 395776
+}
+
+
+qt.core.plugin.factoryloader: Got keys from plugin meta data QList("offscreen")
+qt.core.plugin.factoryloader: looking at "libqminimal.dylib"
+qt.core.plugin.loader: Found metadata in lib /Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/platforms/libqminimal.dylib, metadata=
+{
+    "IID": "org.qt-project.Qt.QPA.QPlatformIntegrationFactoryInterface.5.3",
+    "MetaData": {
+        "Keys": [
+            "minimal"
+        ]
+    },
+    "archlevel": 0,
+    "className": "QMinimalIntegrationPlugin",
+    "debug": false,
+    "version": 395776
+}
+
+
+qt.core.plugin.factoryloader: Got keys from plugin meta data QList("minimal")
+qt.core.plugin.factoryloader: looking at "libqcocoa.dylib"
+qt.core.plugin.loader: Found metadata in lib /Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/platforms/libqcocoa.dylib, metadata=
+{
+    "IID": "org.qt-project.Qt.QPA.QPlatformIntegrationFactoryInterface.5.3",
+    "MetaData": {
+        "Keys": [
+            "cocoa"
+        ]
+    },
+    "archlevel": 0,
+    "className": "QCocoaIntegrationPlugin",
+    "debug": false,
+    "version": 395776
+}
+
+
+qt.core.plugin.factoryloader: Got keys from plugin meta data QList("cocoa")
+qt.core.plugin.factoryloader: checking directory path "/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/platforms" ...
+qt.core.library: "/Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/platforms/libqcocoa.dylib" loaded library
+qt.core.plugin.factoryloader: checking directory path "/Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/platformthemes" ...
+qt.core.plugin.factoryloader: checking directory path "/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/platformthemes" ...
+qt.core.plugin.factoryloader: checking directory path "/Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/styles" ...
+qt.core.plugin.factoryloader: looking at "libqmacstyle.dylib"
+qt.core.plugin.loader: Found metadata in lib /Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/styles/libqmacstyle.dylib, metadata=
+{
+    "IID": "org.qt-project.Qt.QStyleFactoryInterface",
+    "MetaData": {
+        "Keys": [
+            "macOS"
+        ]
+    },
+    "archlevel": 0,
+    "className": "QMacStylePlugin",
+    "debug": false,
+    "version": 395776
+}
+
+
+qt.core.plugin.factoryloader: Got keys from plugin meta data QList("macos")
+qt.core.plugin.factoryloader: checking directory path "/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/styles" ...
+qt.core.library: "/Users/innovation/csv-ide/.venv/lib/python3.12/site-packages/PyQt6/Qt6/plugins/styles/libqmacstyle.dylib" loaded library
