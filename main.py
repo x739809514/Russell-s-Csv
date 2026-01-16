@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import math
 import os
 import shlex
@@ -11,7 +12,7 @@ import signal
 from dataclasses import dataclass
 from typing import List, Optional
 
-from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets, QtWebEngineWidgets
 
 
 @dataclass
@@ -709,6 +710,88 @@ class CellDetailPanel(QtWidgets.QWidget):
         index = self._editor._model.index(self._row, self._col)
         self._editor._model.setData(index, self._value_edit.toPlainText())
 
+
+class MermaidPreviewWindow(QtWidgets.QMainWindow):
+    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Mermaid Preview")
+        self.resize(900, 600)
+
+        splitter = QtWidgets.QSplitter(self)
+        splitter.setOrientation(QtCore.Qt.Orientation.Horizontal)
+
+        self._code_edit = QtWidgets.QPlainTextEdit(self)
+        self._code_edit.setPlaceholderText("Paste Mermaid code here...")
+        self._preview = QtWebEngineWidgets.QWebEngineView(self)
+
+        splitter.addWidget(self._code_edit)
+        splitter.addWidget(self._preview)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        self.setCentralWidget(splitter)
+
+        self._code_edit.textChanged.connect(self._update_preview)
+        self._update_preview()
+
+    def _update_preview(self) -> None:
+        raw = self._code_edit.toPlainText()
+        lines = [line.rstrip() for line in raw.splitlines() if line.strip()]
+        cleaned = []
+        for line in lines:
+            if line.lower().startswith("mermaid version"):
+                continue
+            cleaned.append(line)
+        code = "\n".join(cleaned).strip()
+        if code:
+            first = code.splitlines()[0].strip().lower()
+            starters = (
+                "graph ",
+                "flowchart ",
+                "sequencediagram",
+                "classdiagram",
+                "statediagram",
+                "erdiagram",
+                "journey",
+                "gantt",
+                "pie",
+                "requirementdiagram",
+                "gitgraph",
+            )
+            if not first.startswith(starters):
+                code = f"graph TD\n{code}"
+        payload = json.dumps(code)
+        html = f"""<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+      body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 16px; }}
+      .mermaid {{ font-size: 16px; }}
+      #preview {{ overflow: auto; }}
+    </style>
+  </head>
+  <body>
+    <div id="preview">Loading...</div>
+    <script>
+      window.addEventListener("load", () => {{
+        const code = {payload};
+        mermaid.initialize({{ startOnLoad: false }});
+        mermaid
+          .render("graph", code)
+          .then(({{svg}}) => {{
+            document.getElementById("preview").innerHTML = svg;
+          }})
+          .catch((err) => {{
+            const target = document.getElementById("preview");
+            target.textContent = err && err.message ? err.message : String(err);
+          }});
+      }});
+    </script>
+  </body>
+</html>"""
+        self._preview.setHtml(html)
+
 class ReplaceDialog(QtWidgets.QDialog):
     def __init__(self, parent: "MainWindow") -> None:
         super().__init__(parent)
@@ -1173,6 +1256,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._current_path: Optional[str] = None
         self._ignore_selection_change = False
         self._replace_dialog: Optional[ReplaceDialog] = None
+        self._mermaid_preview_window: Optional[MermaidPreviewWindow] = None
         self._build_actions()
         self._root_path = self._settings.value("last_root_path", self._root_path, type=str)
         self.open_folder(self._root_path)
@@ -1365,6 +1449,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         tools_menu = self.menuBar().addMenu("Tools")
         tools_menu.addAction(open_terminal_action)
+        mermaid_preview_action = QtGui.QAction("Mermaid Preview...", self)
+        mermaid_preview_action.triggered.connect(self.open_mermaid_preview)
+        tools_menu.addAction(mermaid_preview_action)
 
         # Ensure shortcuts work even when focus is in the table widget.
         for action in (
@@ -1388,6 +1475,7 @@ class MainWindow(QtWidgets.QMainWindow):
             insert_col_left_action,
             insert_col_right_action,
             delete_cols_action,
+            mermaid_preview_action,
         ):
             action.setShortcutContext(QtCore.Qt.ShortcutContext.ApplicationShortcut)
             self.addAction(action)
@@ -1463,6 +1551,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._replace_dialog.show()
         self._replace_dialog.raise_()
         self._replace_dialog.activateWindow()
+
+    def open_mermaid_preview(self) -> None:
+        if self._mermaid_preview_window is None:
+            self._mermaid_preview_window = MermaidPreviewWindow(self)
+        self._mermaid_preview_window.show()
+        self._mermaid_preview_window.raise_()
+        self._mermaid_preview_window.activateWindow()
 
     def open_folder(self, path: str) -> None:
         self._root_path = path
@@ -1778,7 +1873,7 @@ def main() -> None:
         faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
 
     signal.signal(signal.SIGTERM, _log_sigterm)
-    app = QtWidgets.QApplication([])
+    app = QtWidgets.QApplication(sys.argv)
     window = MainWindow()
     window.show()
     window.raise_()
