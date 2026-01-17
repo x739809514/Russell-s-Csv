@@ -68,6 +68,25 @@ class CSVTableModel(QtCore.QAbstractTableModel):
             return f"Column {section + 1}"
         return str(section + 1)
 
+    def setHeaderData(
+        self,
+        section: int,
+        orientation: QtCore.Qt.Orientation,
+        value,
+        role: int = QtCore.Qt.ItemDataRole.EditRole,
+    ) -> bool:
+        if orientation != QtCore.Qt.Orientation.Horizontal:
+            return False
+        if role != QtCore.Qt.ItemDataRole.EditRole:
+            return False
+        if section < 0:
+            return False
+        while section >= len(self._document.header):
+            self._document.header.append("")
+        self._document.header[section] = str(value)
+        self.headerDataChanged.emit(orientation, section, section)
+        return True
+
     def set_document(self, document: CsvDocument) -> None:
         self.beginResetModel()
         self._document = document

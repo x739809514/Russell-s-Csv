@@ -43,6 +43,7 @@ class EditorWidget(QtWidgets.QWidget):
         self._table_view.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table_view.horizontalHeader().setStretchLastSection(True)
         self._table_view.verticalHeader().setVisible(True)
+        self._table_view.installEventFilter(self)
         self._table_view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self._table_view.customContextMenuRequested.connect(self._show_context_menu)
         self._table_view.verticalHeader().setContextMenuPolicy(
@@ -57,6 +58,7 @@ class EditorWidget(QtWidgets.QWidget):
         self._table_view.horizontalHeader().customContextMenuRequested.connect(
             self._show_col_header_menu
         )
+        self._table_view.horizontalHeader().sectionDoubleClicked.connect(self._rename_column_at)
         self._stack.addWidget(self._table_view)
 
         self._code_edit = QtWidgets.QPlainTextEdit(self)
@@ -285,6 +287,20 @@ class EditorWidget(QtWidgets.QWidget):
 
         menu.exec(self._table_view.viewport().mapToGlobal(position))
 
+    def _clear_selected_cells(self) -> None:
+        selection = self._table_view.selectionModel().selectedIndexes()
+        targets = selection or [self._table_view.selectionModel().currentIndex()]
+        for index in targets:
+            if index.isValid():
+                self._model.setData(index, "")
+
+    def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if obj is self._table_view and event.type() == QtCore.QEvent.Type.KeyPress:
+            if event.key() in (QtCore.Qt.Key.Key_Delete, QtCore.Qt.Key.Key_Backspace):
+                self._clear_selected_cells()
+                return True
+        return super().eventFilter(obj, event)
+
     def _show_row_header_menu(self, position: QtCore.QPoint) -> None:
         row = self._table_view.verticalHeader().logicalIndexAt(position)
         menu = QtWidgets.QMenu(self)
@@ -302,10 +318,13 @@ class EditorWidget(QtWidgets.QWidget):
         menu = QtWidgets.QMenu(self)
         insert_left = menu.addAction("Insert Column Left")
         insert_right = menu.addAction("Insert Column Right")
+        rename_col = menu.addAction("Rename Column")
         delete_col = menu.addAction("Delete Column")
         insert_left.triggered.connect(lambda: self._insert_col_at(col))
         insert_right.triggered.connect(lambda: self._insert_col_at(col + 1))
+        rename_col.triggered.connect(lambda: self._rename_column_at(col))
         delete_col.triggered.connect(lambda: self._delete_col_at(col))
+        rename_col.setEnabled(col >= 0)
         delete_col.setEnabled(col >= 0)
         menu.exec(self._table_view.horizontalHeader().mapToGlobal(position))
 
@@ -329,6 +348,18 @@ class EditorWidget(QtWidgets.QWidget):
         if col < 0 or col >= len(self._document.header):
             return
         self._model.removeColumns(col, 1)
+
+    def _rename_column_at(self, col: int) -> None:
+        if col < 0 or col >= len(self._document.header):
+            return
+        current = self._document.header[col] if col < len(self._document.header) else ""
+        new_name, ok = QtWidgets.QInputDialog.getText(
+            self, "Rename Column", "Column name:", text=current
+        )
+        if not ok:
+            return
+        if self._model.setHeaderData(col, QtCore.Qt.Orientation.Horizontal, new_name):
+            self._on_model_changed()
 
     def sync_from_code_view(self) -> bool:
         if self._stack.currentIndex() != 1:

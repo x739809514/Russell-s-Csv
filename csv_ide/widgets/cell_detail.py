@@ -1,6 +1,6 @@
 from typing import Optional, TYPE_CHECKING
 
-from PyQt6 import QtWidgets
+from PyQt6 import QtCore, QtWidgets
 
 from csv_ide.widgets.editor import EditorWidget
 
@@ -15,12 +15,14 @@ class CellDetailPanel(QtWidgets.QWidget):
         self._editor: Optional[EditorWidget] = None
         self._row: Optional[int] = None
         self._col: Optional[int] = None
+        self._selected_cells: list[tuple[int, int]] = []
 
         layout = QtWidgets.QVBoxLayout(self)
         self._title = QtWidgets.QLabel("No cell selected.")
         self._title.setStyleSheet("font-weight: bold;")
         self._value_edit = QtWidgets.QPlainTextEdit(self)
         self._value_edit.setPlaceholderText("Select a cell to view/edit its value.")
+        self._value_edit.installEventFilter(self)
         self._apply_btn = QtWidgets.QPushButton("Apply", self)
         self._apply_btn.setEnabled(False)
 
@@ -34,7 +36,15 @@ class CellDetailPanel(QtWidgets.QWidget):
         self._editor = editor
         self._row = row
         self._col = col
-        self._title.setText(f"Row {row + 1}, Col {col + 1}")
+        selected = editor._table_view.selectionModel().selectedIndexes()
+        if selected:
+            self._selected_cells = [(index.row(), index.column()) for index in selected]
+        else:
+            self._selected_cells = []
+        if len(selected) > 1:
+            self._title.setText(f"{len(selected)} cells selected")
+        else:
+            self._title.setText(f"Row {row + 1}, Col {col + 1}")
         self._value_edit.setPlainText(value)
         self._apply_btn.setEnabled(True)
 
@@ -42,6 +52,7 @@ class CellDetailPanel(QtWidgets.QWidget):
         self._editor = None
         self._row = None
         self._col = None
+        self._selected_cells = []
         self._title.setText("No cell selected.")
         self._value_edit.setPlainText("")
         self._apply_btn.setEnabled(False)
@@ -49,5 +60,24 @@ class CellDetailPanel(QtWidgets.QWidget):
     def _apply_changes(self) -> None:
         if not self._editor or self._row is None or self._col is None:
             return
-        index = self._editor._model.index(self._row, self._col)
-        self._editor._model.setData(index, self._value_edit.toPlainText())
+        selection = self._editor._table_view.selectionModel().selectedIndexes()
+        if selection:
+            targets = selection
+        elif self._selected_cells:
+            targets = [
+                self._editor._model.index(row, col) for row, col in self._selected_cells
+            ]
+        else:
+            targets = [self._editor._model.index(self._row, self._col)]
+        new_value = self._value_edit.toPlainText()
+        for index in targets:
+            if index.isValid():
+                self._editor._model.setData(index, new_value)
+
+    def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if obj is self._value_edit and event.type() == QtCore.QEvent.Type.KeyPress:
+            if event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
+                if not (event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier):
+                    self._apply_changes()
+                    return True
+        return super().eventFilter(obj, event)
