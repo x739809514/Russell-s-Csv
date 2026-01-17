@@ -1,0 +1,456 @@
+import csv
+import io
+from typing import List, Optional
+
+from PyQt6 import QtCore, QtWidgets
+
+from csv_ide.models import CsvDocument, CSVTableModel
+
+
+class EditorWidget(QtWidgets.QWidget):
+    document_changed = QtCore.pyqtSignal(str)
+    cell_selected = QtCore.pyqtSignal(int, int, str)
+
+    def __init__(self, document: CsvDocument, parent: Optional[QtWidgets.QWidget] = None) -> None:
+        super().__init__(parent)
+        self._document = document
+        self._undo_stack: List[CsvDocument] = []
+        self._undo_index = -1
+        self._ignore_history = False
+        self._dirty = False
+
+        self._toggle_group = QtWidgets.QButtonGroup(self)
+        self._grid_button = QtWidgets.QToolButton(self)
+        self._grid_button.setText("Grid")
+        self._grid_button.setCheckable(True)
+        self._code_button = QtWidgets.QToolButton(self)
+        self._code_button.setText("Code")
+        self._code_button.setCheckable(True)
+        self._toggle_group.addButton(self._grid_button)
+        self._toggle_group.addButton(self._code_button)
+        self._grid_button.setChecked(True)
+
+        toggle_layout = QtWidgets.QHBoxLayout()
+        toggle_layout.setContentsMargins(0, 0, 0, 0)
+        toggle_layout.addWidget(self._grid_button)
+        toggle_layout.addWidget(self._code_button)
+        toggle_layout.addStretch(1)
+
+        self._stack = QtWidgets.QStackedWidget(self)
+        self._table_view = QtWidgets.QTableView(self)
+        self._table_view.setAlternatingRowColors(True)
+        self._table_view.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectItems)
+        self._table_view.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._table_view.horizontalHeader().setStretchLastSection(True)
+        self._table_view.verticalHeader().setVisible(True)
+        self._table_view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table_view.customContextMenuRequested.connect(self._show_context_menu)
+        self._table_view.verticalHeader().setContextMenuPolicy(
+            QtCore.Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self._table_view.horizontalHeader().setContextMenuPolicy(
+            QtCore.Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self._table_view.verticalHeader().customContextMenuRequested.connect(
+            self._show_row_header_menu
+        )
+        self._table_view.horizontalHeader().customContextMenuRequested.connect(
+            self._show_col_header_menu
+        )
+        self._stack.addWidget(self._table_view)
+
+        self._code_edit = QtWidgets.QPlainTextEdit(self)
+        self._code_edit.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
+        self._stack.addWidget(self._code_edit)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(toggle_layout)
+        layout.addWidget(self._stack)
+
+        self._model = CSVTableModel(self._document, self)
+        self._table_view.setModel(self._model)
+        self._table_view.selectionModel().currentChanged.connect(self._on_current_cell_changed)
+
+        self._toggle_group.buttonToggled.connect(self._on_toggle)
+        self._code_edit.textChanged.connect(self._on_code_changed)
+        self._model.dataChanged.connect(self._on_model_changed)
+        self._model.rowsInserted.connect(lambda *_: self._on_model_changed())
+        self._model.rowsRemoved.connect(lambda *_: self._on_model_changed())
+        self._model.columnsInserted.connect(lambda *_: self._on_model_changed())
+        self._model.columnsRemoved.connect(lambda *_: self._on_model_changed())
+        self._push_history()
+
+    @property
+    def document(self) -> CsvDocument:
+        return self._document
+
+    def is_dirty(self) -> bool:
+        return self._dirty
+
+    def set_dirty(self, dirty: bool) -> None:
+        self._dirty = dirty
+        self.document_changed.emit(self._document.path)
+
+    def set_document(self, document: CsvDocument) -> None:
+        self._document = document
+        self._model.set_document(document)
+        self._push_history()
+        self._dirty = False
+        if self._stack.currentIndex() == 1:
+            self._code_edit.setPlainText(self._serialize_document())
+
+    def _serialize_document(self) -> str:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, delimiter=self._document.delimiter)
+        if self._document.header:
+            writer.writerow(self._document.header)
+        writer.writerows(self._document.rows)
+        return buffer.getvalue()
+
+    def _parse_csv_text(self, text: str) -> Optional[CsvDocument]:
+        reader = csv.reader(io.StringIO(text), delimiter=self._document.delimiter)
+        rows = list(reader)
+        if not rows:
+            return CsvDocument(self._document.path, self._document.delimiter, [], [])
+        header = rows[0]
+        expected_cols = len(header)
+        for idx, row in enumerate(rows[1:], start=2):
+            if len(row) != expected_cols:
+                raise ValueError(f"Line {idx} has {len(row)} columns, expected {expected_cols}.")
+        return CsvDocument(self._document.path, self._document.delimiter, header, rows[1:])
+
+    def _on_toggle(self, button: QtWidgets.QAbstractButton, checked: bool) -> None:
+        if not checked:
+            return
+        if button is self._code_button:
+            self._code_edit.blockSignals(True)
+            self._code_edit.setPlainText(self._serialize_document())
+            self._code_edit.blockSignals(False)
+            self._stack.setCurrentIndex(1)
+        else:
+            text = self._code_edit.toPlainText()
+            try:
+                parsed = self._parse_csv_text(text)
+            except ValueError as exc:
+                QtWidgets.QMessageBox.warning(self, "CSV Parse Error", str(exc))
+                self._code_button.setChecked(True)
+                return
+            if parsed is not None:
+                self._document = parsed
+                self._model.set_document(parsed)
+                self._push_history()
+                self.document_changed.emit(parsed.path)
+            self._stack.setCurrentIndex(0)
+
+    def _on_code_changed(self) -> None:
+        if self._stack.currentIndex() == 1:
+            self._dirty = True
+            self.document_changed.emit(self._document.path)
+
+    def _on_model_changed(self) -> None:
+        if not self._ignore_history:
+            self._push_history()
+        self._dirty = True
+        self.document_changed.emit(self._document.path)
+        current = self._table_view.selectionModel().currentIndex()
+        if current.isValid():
+            self._emit_cell_selected(current.row(), current.column())
+
+    def _on_current_cell_changed(
+        self, current: QtCore.QModelIndex, _: QtCore.QModelIndex
+    ) -> None:
+        if current.isValid():
+            self._emit_cell_selected(current.row(), current.column())
+
+    def _emit_cell_selected(self, row: int, col: int) -> None:
+        value = self._cell_text(row, col)
+        self.cell_selected.emit(row, col, value)
+
+    def _snapshot(self) -> CsvDocument:
+        header = list(self._document.header)
+        rows = [list(row) for row in self._document.rows]
+        return CsvDocument(self._document.path, self._document.delimiter, header, rows)
+
+    def _push_history(self) -> None:
+        snapshot = self._snapshot()
+        if self._undo_index >= 0 and self._undo_index < len(self._undo_stack):
+            current = self._undo_stack[self._undo_index]
+            if current.header == snapshot.header and current.rows == snapshot.rows:
+                return
+        if self._undo_index < len(self._undo_stack) - 1:
+            self._undo_stack = self._undo_stack[: self._undo_index + 1]
+        self._undo_stack.append(snapshot)
+        self._undo_index = len(self._undo_stack) - 1
+
+    def can_undo(self) -> bool:
+        return self._undo_index > 0
+
+    def can_redo(self) -> bool:
+        return self._undo_index < len(self._undo_stack) - 1
+
+    def undo(self) -> None:
+        if not self.can_undo():
+            return
+        self._undo_index -= 1
+        self._restore_history(self._undo_stack[self._undo_index])
+
+    def redo(self) -> None:
+        if not self.can_redo():
+            return
+        self._undo_index += 1
+        self._restore_history(self._undo_stack[self._undo_index])
+
+    def _restore_history(self, snapshot: CsvDocument) -> None:
+        self._ignore_history = True
+        self._document = self._snapshot()
+        self._document.header = list(snapshot.header)
+        self._document.rows = [list(row) for row in snapshot.rows]
+        self._model.set_document(self._document)
+        self._ignore_history = False
+        self._dirty = True
+        self.document_changed.emit(self._document.path)
+
+    def insert_row_above(self) -> None:
+        selection = self._table_view.selectionModel().selectedIndexes()
+        row = min((idx.row() for idx in selection), default=0)
+        self._model.insertRows(row, 1)
+
+    def insert_row_below(self) -> None:
+        selection = self._table_view.selectionModel().selectedIndexes()
+        row = max((idx.row() for idx in selection), default=-1) + 1
+        self._model.insertRows(row, 1)
+
+    def delete_rows(self) -> None:
+        selection = self._table_view.selectionModel().selectedIndexes()
+        if not selection:
+            return
+        rows = sorted({idx.row() for idx in selection})
+        for row in reversed(rows):
+            self._model.removeRows(row, 1)
+
+    def insert_col_left(self) -> None:
+        selection = self._table_view.selectionModel().selectedIndexes()
+        col = min((idx.column() for idx in selection), default=0)
+        self._model.insertColumns(col, 1)
+        self._document.header[col] = self._generate_column_name()
+        self._model.headerDataChanged.emit(QtCore.Qt.Orientation.Horizontal, col, col)
+
+    def insert_col_right(self) -> None:
+        selection = self._table_view.selectionModel().selectedIndexes()
+        col = max((idx.column() for idx in selection), default=-1) + 1
+        self._model.insertColumns(col, 1)
+        self._document.header[col] = self._generate_column_name()
+        self._model.headerDataChanged.emit(QtCore.Qt.Orientation.Horizontal, col, col)
+
+    def delete_cols(self) -> None:
+        selection = self._table_view.selectionModel().selectedIndexes()
+        if not selection:
+            return
+        cols = sorted({idx.column() for idx in selection})
+        for col in reversed(cols):
+            self._model.removeColumns(col, 1)
+
+    def _generate_column_name(self) -> str:
+        base = "new_column"
+        existing = {name for name in self._document.header if name}
+        if base not in existing:
+            return base
+        counter = 2
+        while f"{base}_{counter}" in existing:
+            counter += 1
+        return f"{base}_{counter}"
+
+    def _show_context_menu(self, position: QtCore.QPoint) -> None:
+        menu = QtWidgets.QMenu(self)
+
+        insert_row_above = menu.addAction("Insert Row Above")
+        insert_row_below = menu.addAction("Insert Row Below")
+        delete_rows = menu.addAction("Delete Row(s)")
+        menu.addSeparator()
+        insert_col_left = menu.addAction("Insert Column Left")
+        insert_col_right = menu.addAction("Insert Column Right")
+        delete_cols = menu.addAction("Delete Column(s)")
+
+        insert_row_above.triggered.connect(self.insert_row_above)
+        insert_row_below.triggered.connect(self.insert_row_below)
+        delete_rows.triggered.connect(self.delete_rows)
+        insert_col_left.triggered.connect(self.insert_col_left)
+        insert_col_right.triggered.connect(self.insert_col_right)
+        delete_cols.triggered.connect(self.delete_cols)
+
+        selection = self._table_view.selectionModel().selectedIndexes()
+        has_selection = bool(selection)
+        delete_rows.setEnabled(has_selection)
+        delete_cols.setEnabled(has_selection)
+
+        menu.exec(self._table_view.viewport().mapToGlobal(position))
+
+    def _show_row_header_menu(self, position: QtCore.QPoint) -> None:
+        row = self._table_view.verticalHeader().logicalIndexAt(position)
+        menu = QtWidgets.QMenu(self)
+        insert_above = menu.addAction("Insert Row Above")
+        insert_below = menu.addAction("Insert Row Below")
+        delete_row = menu.addAction("Delete Row")
+        insert_above.triggered.connect(lambda: self._insert_row_at(row))
+        insert_below.triggered.connect(lambda: self._insert_row_at(row + 1))
+        delete_row.triggered.connect(lambda: self._delete_row_at(row))
+        delete_row.setEnabled(row >= 0)
+        menu.exec(self._table_view.verticalHeader().mapToGlobal(position))
+
+    def _show_col_header_menu(self, position: QtCore.QPoint) -> None:
+        col = self._table_view.horizontalHeader().logicalIndexAt(position)
+        menu = QtWidgets.QMenu(self)
+        insert_left = menu.addAction("Insert Column Left")
+        insert_right = menu.addAction("Insert Column Right")
+        delete_col = menu.addAction("Delete Column")
+        insert_left.triggered.connect(lambda: self._insert_col_at(col))
+        insert_right.triggered.connect(lambda: self._insert_col_at(col + 1))
+        delete_col.triggered.connect(lambda: self._delete_col_at(col))
+        delete_col.setEnabled(col >= 0)
+        menu.exec(self._table_view.horizontalHeader().mapToGlobal(position))
+
+    def _insert_row_at(self, row: int) -> None:
+        row = max(0, min(row, len(self._document.rows)))
+        self._model.insertRows(row, 1)
+
+    def _delete_row_at(self, row: int) -> None:
+        if row < 0 or row >= len(self._document.rows):
+            return
+        self._model.removeRows(row, 1)
+
+    def _insert_col_at(self, col: int) -> None:
+        col = max(0, min(col, len(self._document.header)))
+        self._model.insertColumns(col, 1)
+        if col < len(self._document.header):
+            self._document.header[col] = self._generate_column_name()
+            self._model.headerDataChanged.emit(QtCore.Qt.Orientation.Horizontal, col, col)
+
+    def _delete_col_at(self, col: int) -> None:
+        if col < 0 or col >= len(self._document.header):
+            return
+        self._model.removeColumns(col, 1)
+
+    def sync_from_code_view(self) -> bool:
+        if self._stack.currentIndex() != 1:
+            return True
+        text = self._code_edit.toPlainText()
+        try:
+            parsed = self._parse_csv_text(text)
+        except ValueError as exc:
+            QtWidgets.QMessageBox.warning(self, "CSV Parse Error", str(exc))
+            return False
+        if parsed is not None:
+            self._document = parsed
+            self._model.set_document(parsed)
+            self._push_history()
+            self._dirty = True
+        return True
+
+    def _grid_match(self, value: str, text: str, case_sensitive: bool) -> bool:
+        if case_sensitive:
+            return text in value
+        return text.lower() in value.lower()
+
+    def _iter_cells(self):
+        rows = len(self._document.rows)
+        cols = len(self._document.header)
+        for row in range(rows):
+            for col in range(cols):
+                yield row, col
+
+    def _cell_text(self, row: int, col: int) -> str:
+        index = self._model.index(row, col)
+        value = self._model.data(index, QtCore.Qt.ItemDataRole.DisplayRole)
+        return "" if value is None else str(value)
+
+    def _activate_grid_view(self) -> bool:
+        if self._stack.currentIndex() == 1:
+            if not self.sync_from_code_view():
+                return False
+            self._grid_button.setChecked(True)
+        return True
+
+    def select_cell(self, row: int, col: int) -> None:
+        index = self._model.index(row, col)
+        if not index.isValid():
+            return
+        if not self._activate_grid_view():
+            return
+        selection = self._table_view.selectionModel()
+        selection.clearSelection()
+        selection.setCurrentIndex(
+            index, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect
+        )
+        self._table_view.scrollTo(index)
+
+    def find_next_in_grid(self, text: str, case_sensitive: bool) -> bool:
+        if not text:
+            return False
+        if not self._activate_grid_view():
+            return False
+        rows = len(self._document.rows)
+        cols = len(self._document.header)
+        if rows == 0 or cols == 0:
+            return False
+        current = self._table_view.selectionModel().currentIndex()
+        start = 0
+        if current.isValid():
+            start = current.row() * cols + current.column() + 1
+        total = rows * cols
+        for offset in range(total):
+            idx = (start + offset) % total
+            row = idx // cols
+            col = idx % cols
+            value = self._cell_text(row, col)
+            if self._grid_match(value, text, case_sensitive):
+                self.select_cell(row, col)
+                return True
+        return False
+
+    def find_all_in_grid(self, text: str, case_sensitive: bool) -> List[tuple[int, int, str]]:
+        if not text:
+            return []
+        if not self._activate_grid_view():
+            return []
+        results: List[tuple[int, int, str]] = []
+        for row, col in self._iter_cells():
+            value = self._cell_text(row, col)
+            if self._grid_match(value, text, case_sensitive):
+                results.append((row, col, value))
+        return results
+
+    def replace_current_in_grid(
+        self, find_text: str, replace_text: str, case_sensitive: bool
+    ) -> bool:
+        if not find_text:
+            return False
+        if not self._activate_grid_view():
+            return False
+        current = self._table_view.selectionModel().currentIndex()
+        if current.isValid():
+            value = self._cell_text(current.row(), current.column())
+            if self._grid_match(value, find_text, case_sensitive):
+                self._model.setData(current, replace_text)
+                return True
+        if self.find_next_in_grid(find_text, case_sensitive):
+            current = self._table_view.selectionModel().currentIndex()
+            if current.isValid():
+                self._model.setData(current, replace_text)
+                return True
+        return False
+
+    def replace_all_in_grid(
+        self, find_text: str, replace_text: str, case_sensitive: bool
+    ) -> int:
+        if not find_text:
+            return 0
+        if not self._activate_grid_view():
+            return 0
+        count = 0
+        for row, col in self._iter_cells():
+            value = self._cell_text(row, col)
+            if self._grid_match(value, find_text, case_sensitive):
+                index = self._model.index(row, col)
+                self._model.setData(index, replace_text)
+                count += 1
+        return count
