@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 import re
 import shlex
@@ -15,8 +16,9 @@ from csv_ide.theme import apply_theme
 from csv_ide.widgets.cell_detail import CellDetailPanel
 from csv_ide.widgets.editor import EditorWidget
 from csv_ide.widgets.find_panel import FindPanel
-from csv_ide.widgets.relation_panel import RelationPanel
+from csv_ide.widgets.html_preview import HtmlPreviewWindow
 from csv_ide.widgets.replace_dialog import ReplaceDialog
+from csv_ide.widgets.relation_editor_dialog import RelationEditorDialog
 from csv_ide.widgets.safe_mode_dialog import SafeModeDialog
 
 
@@ -60,10 +62,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tabs.currentChanged.connect(self._on_tab_changed)
 
         right_panel = QtWidgets.QTabWidget(self)
-        relation_panel = RelationPanel(self)
         self._find_panel = FindPanel(self)
         self._cell_panel = CellDetailPanel(self)
-        right_panel.addTab(relation_panel, "Relationship Graph")
         right_panel.addTab(self._find_panel, "Find")
         right_panel.addTab(self._cell_panel, "Cell")
 
@@ -82,6 +82,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._current_path: Optional[str] = None
         self._ignore_selection_change = False
         self._replace_dialog: Optional[ReplaceDialog] = None
+        self._relation_editor_dialog: Optional[RelationEditorDialog] = None
         self._safe_mode_dialog: Optional[SafeModeDialog] = None
         self._safe_mode_timer = QtCore.QTimer(self)
         self._safe_mode_timer.timeout.connect(self._run_safe_mode_backup)
@@ -279,6 +280,15 @@ class MainWindow(QtWidgets.QMainWindow):
         safe_mode_action = QtGui.QAction("Safe Mode...", self)
         safe_mode_action.triggered.connect(self.open_safe_mode_dialog)
         tools_menu.addAction(safe_mode_action)
+        relations_action = QtGui.QAction("Edit Relations...", self)
+        relations_action.triggered.connect(self.open_relation_editor)
+        tools_menu.addAction(relations_action)
+        relations_graph_action = QtGui.QAction("Relationship Graph...", self)
+        relations_graph_action.triggered.connect(self.open_relation_graph)
+        tools_menu.addAction(relations_graph_action)
+        import_relations_action = QtGui.QAction("Import Relation Config...", self)
+        import_relations_action.triggered.connect(self.import_relation_configs)
+        tools_menu.addAction(import_relations_action)
 
         self._plugin_menu = self.menuBar().addMenu("Plugin")
         add_plugin_action = QtGui.QAction("Add Script...", self)
@@ -312,6 +322,9 @@ class MainWindow(QtWidgets.QMainWindow):
             open_folder_action,
             open_terminal_action,
             safe_mode_action,
+            relations_action,
+            relations_graph_action,
+            import_relations_action,
             save_action,
             save_as_action,
             save_copy_action,
@@ -424,6 +437,59 @@ class MainWindow(QtWidgets.QMainWindow):
         self._safe_mode_dialog.show()
         self._safe_mode_dialog.raise_()
         self._safe_mode_dialog.activateWindow()
+
+    def open_relation_editor(self) -> None:
+        if self._relation_editor_dialog is None:
+            self._relation_editor_dialog = RelationEditorDialog(self)
+        else:
+            self._relation_editor_dialog.refresh_state()
+        self._relation_editor_dialog.show()
+        self._relation_editor_dialog.raise_()
+        self._relation_editor_dialog.activateWindow()
+
+    def open_relation_graph(self) -> None:
+        content = self._relation_graph_text()
+        window = HtmlPreviewWindow(
+            self,
+            show_editor=False,
+            enable_node_drag=True,
+            layout_path=self._relation_layout_path(),
+        )
+        window.setWindowTitle("Relationship Graph")
+        window.set_content(content)
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def import_relation_configs(self) -> None:
+        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self,
+            "Import Relation Config",
+            self._root_path,
+            "JSON Files (*.json)",
+        )
+        if not paths:
+            return
+        imported_relations = False
+        imported_layout = False
+        for path in paths:
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(data, dict) and "relations" in data:
+                self._save_relations(data)
+                imported_relations = True
+            if isinstance(data, dict) and "nodes" in data:
+                self._save_relation_layout(data)
+                imported_layout = True
+        if self._relation_editor_dialog is not None and imported_relations:
+            self._relation_editor_dialog.refresh_state()
+        if imported_relations or imported_layout:
+            self._status_bar.showMessage("Imported relation configuration")
+        else:
+            self._status_bar.showMessage("No valid relation config found")
 
     def open_folder(self, path: str) -> None:
         self._root_path = path
@@ -1037,3 +1103,156 @@ class MainWindow(QtWidgets.QMainWindow):
         if " -> " not in entry:
             return ""
         return entry.split(" -> ", 1)[1].strip()
+
+    def _relations_path(self) -> str:
+        root = self._root_path or QtCore.QDir.currentPath()
+        return os.path.join(root, "relations.json")
+
+    def _relation_layout_path(self) -> str:
+        root = self._root_path or QtCore.QDir.currentPath()
+        return os.path.join(root, "relation_layout.json")
+
+    def _load_relations(self) -> dict:
+        path = self._relations_path()
+        if not os.path.exists(path):
+            return {"version": 1, "relations": []}
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return {"version": 1, "relations": []}
+        if not isinstance(data, dict):
+            return {"version": 1, "relations": []}
+        relations = data.get("relations", [])
+        if not isinstance(relations, list):
+            relations = []
+        return {"version": 1, "relations": relations}
+
+    def _save_relations(self, data: dict) -> None:
+        path = self._relations_path()
+        payload = {
+            "version": 1,
+            "relations": data.get("relations", []),
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=True, indent=2, sort_keys=True)
+        except OSError:
+            return
+
+    def _save_relation_layout(self, data: dict) -> None:
+        path = self._relation_layout_path()
+        nodes = data.get("nodes", {})
+        if not isinstance(nodes, dict):
+            return
+        payload = {"version": 1, "nodes": nodes}
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=True, indent=2, sort_keys=True)
+        except OSError:
+            return
+
+    def _relation_list(self) -> list[dict]:
+        return self._load_relations().get("relations", [])
+
+    def _relation_add(self, relation: dict) -> None:
+        data = self._load_relations()
+        relations = data.get("relations", [])
+        if relation in relations:
+            return
+        relations.append(relation)
+        data["relations"] = relations
+        self._save_relations(data)
+
+    def _relation_delete(self, relations_to_remove: list[dict]) -> None:
+        if not relations_to_remove:
+            return
+        data = self._load_relations()
+        relations = data.get("relations", [])
+        relations = [rel for rel in relations if rel not in relations_to_remove]
+        data["relations"] = relations
+        self._save_relations(data)
+
+    def _relation_current_table(self) -> str:
+        if not self._current_path or not self._root_path:
+            return ""
+        try:
+            return os.path.relpath(self._current_path, self._root_path)
+        except ValueError:
+            return os.path.basename(self._current_path)
+
+    def _relation_tables(self) -> list[str]:
+        if not self._root_path:
+            return []
+        tables: list[str] = []
+        for root, _, files in os.walk(self._root_path):
+            for name in files:
+                _, ext = os.path.splitext(name)
+                if ext.lower() in {".csv", ".tsv"}:
+                    full = os.path.join(root, name)
+                    try:
+                        rel = os.path.relpath(full, self._root_path)
+                    except ValueError:
+                        rel = name
+                    tables.append(rel)
+        return sorted(set(tables))
+
+    def _relation_current_fields(self) -> list[str]:
+        path = self._current_path
+        if not path:
+            return []
+        return self._read_csv_header(path)
+
+    def _relation_table_fields(self, table: str) -> list[str]:
+        if not table:
+            return []
+        path = table
+        if not os.path.isabs(path):
+            if self._root_path:
+                path = os.path.join(self._root_path, table)
+        return self._read_csv_header(path)
+
+    def _read_csv_header(self, path: str) -> list[str]:
+        if not os.path.exists(path):
+            return []
+        delimiter = "\t" if path.lower().endswith(".tsv") else ","
+        try:
+            with open(path, "r", encoding="utf-8", newline="") as handle:
+                reader = csv.reader(handle, delimiter=delimiter)
+                setting = self._relation_header_setting()
+                if setting.lower() == "head":
+                    return next(reader, [])
+                try:
+                    row_index = max(1, int(setting))
+                except ValueError:
+                    return next(reader, [])
+                row = []
+                for _ in range(row_index):
+                    row = next(reader, [])
+                return row
+        except OSError:
+            return []
+
+    def _relation_header_setting(self) -> str:
+        value = self._settings.value("relations_header_row", "4", type=str)
+        return value.strip() or "4"
+
+    def _set_relation_header_setting(self, value: str) -> None:
+        self._settings.setValue("relations_header_row", value.strip())
+
+    def _relation_graph_text(self) -> str:
+        relations = self._relation_list()
+        if not relations:
+            return "No relations defined."
+        lines = ["graph LR"]
+        for rel in relations:
+            from_table = rel.get("from_table", "")
+            from_field = rel.get("from_field", "")
+            to_table = rel.get("to_table", "")
+            to_field = rel.get("to_field", "")
+            if not (from_table and from_field and to_table and to_field):
+                continue
+            left = f"{from_table} ({from_field})"
+            right = f"{to_table} ({to_field})"
+            lines.append(f"{left} --> {right}")
+        return "\n".join(lines)
