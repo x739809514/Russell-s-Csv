@@ -19,9 +19,9 @@ from csv_ide.widgets.replace_dialog import ReplaceDialog
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("CSV-IDE Prototype")
+        self.setWindowTitle("RussellCsv")
         self.resize(1200, 720)
-        self._settings = QtCore.QSettings("CSV-IDE", "CSV-IDE")
+        self._settings = QtCore.QSettings("RussellCsv", "RussellCsv")
         self._theme_name = self._settings.value("ui_theme", "light", type=str)
         self._plugin_scripts = self._settings.value("plugin_scripts", [], type=list)
         self._plugin_processes: list[QtCore.QProcess] = []
@@ -35,8 +35,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._search_input.setPlaceholderText("Filter files...")
         self._file_list = QtWidgets.QListWidget(self)
         self._file_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._file_list.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self._file_list.itemSelectionChanged.connect(self._on_file_selection_changed)
         self._file_list.itemDoubleClicked.connect(self._open_from_list)
+        self._file_list.customContextMenuRequested.connect(self._show_file_list_menu)
         self._search_input.textChanged.connect(self._filter_file_list)
         left_layout.addWidget(self._search_input)
         left_layout.addWidget(self._file_list)
@@ -70,6 +72,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._current_path: Optional[str] = None
         self._ignore_selection_change = False
         self._replace_dialog: Optional[ReplaceDialog] = None
+        self._file_comments = self._load_file_comments()
         self._build_actions()
         self._root_path = self._settings.value("last_root_path", self._root_path, type=str)
         self._apply_theme(self._theme_name)
@@ -548,6 +551,9 @@ class MainWindow(QtWidgets.QMainWindow):
         except OSError as exc:
             QtWidgets.QMessageBox.warning(self, "Rename failed", str(exc))
             return
+        if current_path in self._file_comments:
+            self._file_comments[new_path] = self._file_comments.pop(current_path)
+            self._persist_file_comments()
         editor.document.path = new_path
         self._open_documents.pop(current_path, None)
         self._open_documents[new_path] = editor
@@ -609,12 +615,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_window_title(self, editor: Optional[EditorWidget]) -> None:
         if not editor:
-            self.setWindowTitle("CSV-IDE Prototype")
+            self.setWindowTitle("RussellCsv")
             return
         name = os.path.basename(editor.document.path)
         if editor.is_dirty():
             name = f"*{name}"
-        self.setWindowTitle(f"{name} - CSV-IDE")
+        self.setWindowTitle(f"{name} - RussellCsv")
         self._update_tab_label(editor)
 
     def _update_tab_label(self, editor: EditorWidget) -> None:
@@ -729,7 +735,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for name, full_path in sorted(entries, key=lambda item: item[0].lower()):
             item = QtWidgets.QListWidgetItem(name)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, full_path)
-            item.setToolTip(full_path)
+            item.setToolTip(self._item_tooltip(full_path))
             self._file_list.addItem(item)
 
     def _filter_file_list(self, text: str) -> None:
@@ -737,7 +743,12 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in range(self._file_list.count()):
             item = self._file_list.item(i)
             name = item.text().lower()
-            item.setHidden(bool(text) and text not in name)
+            path = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            comment = ""
+            if isinstance(path, str):
+                comment = self._file_comments.get(path, "").lower()
+            match = text in name or (comment and text in comment)
+            item.setHidden(bool(text) and not match)
 
     def _select_path(self, path: str) -> None:
         for i in range(self._file_list.count()):
@@ -754,7 +765,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if item_path == old_path:
                 item.setText(os.path.basename(new_path))
                 item.setData(QtCore.Qt.ItemDataRole.UserRole, new_path)
-                item.setToolTip(new_path)
+                item.setToolTip(self._item_tooltip(new_path))
                 return
 
     def _persist_session_state(self) -> None:
@@ -790,3 +801,51 @@ class MainWindow(QtWidgets.QMainWindow):
             path = item.data(QtCore.Qt.ItemDataRole.UserRole)
             if path in target:
                 item.setSelected(True)
+
+    def _show_file_list_menu(self, position: QtCore.QPoint) -> None:
+        item = self._file_list.itemAt(position)
+        if not item:
+            return
+        path = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        if not isinstance(path, str):
+            return
+        menu = QtWidgets.QMenu(self)
+        add_comment = menu.addAction("Add Comment")
+        remove_comment = menu.addAction("Remove Comment")
+        add_comment.triggered.connect(lambda: self._add_comment_for_item(item, path))
+        remove_comment.triggered.connect(lambda: self._remove_comment_for_item(item, path))
+        remove_comment.setEnabled(path in self._file_comments)
+        menu.exec(self._file_list.viewport().mapToGlobal(position))
+
+    def _add_comment_for_item(self, item: QtWidgets.QListWidgetItem, path: str) -> None:
+        current = self._file_comments.get(path, "")
+        comment, ok = QtWidgets.QInputDialog.getText(
+            self, "Add Comment", "Comment:", text=current
+        )
+        if not ok:
+            return
+        comment = comment.strip()
+        if comment:
+            self._file_comments[path] = comment
+        else:
+            self._file_comments.pop(path, None)
+        self._persist_file_comments()
+        item.setToolTip(self._item_tooltip(path))
+
+    def _remove_comment_for_item(self, item: QtWidgets.QListWidgetItem, path: str) -> None:
+        if path in self._file_comments:
+            self._file_comments.pop(path, None)
+            self._persist_file_comments()
+        item.setToolTip(self._item_tooltip(path))
+
+    def _item_tooltip(self, path: str) -> str:
+        return self._file_comments.get(path, "None")
+
+    def _load_file_comments(self) -> dict[str, str]:
+        raw = self._settings.value("file_comments", {}, type=dict)
+        if not isinstance(raw, dict):
+            return {}
+        return {str(key): str(value) for key, value in raw.items() if value is not None}
+
+    def _persist_file_comments(self) -> None:
+        self._settings.setValue("file_comments", self._file_comments)

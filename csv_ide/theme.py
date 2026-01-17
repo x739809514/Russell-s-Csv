@@ -122,5 +122,10 @@ def apply_theme(app: QtWidgets.QApplication, name: str) -> None:
             background: {colors['window']};
             color: {colors['muted']};
         }}
+        QToolTip {{
+            color: {colors['accent']};
+            background: {colors['base']};
+            border: 1px solid {colors['border']};
+        }}
         """
     )

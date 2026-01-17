@@ -23,11 +23,13 @@ class CellDetailPanel(QtWidgets.QWidget):
         self._value_edit = QtWidgets.QPlainTextEdit(self)
         self._value_edit.setPlaceholderText("Select a cell to view/edit its value.")
         self._value_edit.installEventFilter(self)
+        self._increment_check = QtWidgets.QCheckBox("Increment", self)
         self._apply_btn = QtWidgets.QPushButton("Apply", self)
         self._apply_btn.setEnabled(False)
 
         layout.addWidget(self._title)
         layout.addWidget(self._value_edit)
+        layout.addWidget(self._increment_check)
         layout.addWidget(self._apply_btn)
 
         self._apply_btn.clicked.connect(self._apply_changes)
@@ -55,6 +57,7 @@ class CellDetailPanel(QtWidgets.QWidget):
         self._selected_cells = []
         self._title.setText("No cell selected.")
         self._value_edit.setPlainText("")
+        self._increment_check.setChecked(False)
         self._apply_btn.setEnabled(False)
 
     def _apply_changes(self) -> None:
@@ -69,6 +72,20 @@ class CellDetailPanel(QtWidgets.QWidget):
             ]
         else:
             targets = [self._editor._model.index(self._row, self._col)]
+        if self._increment_check.isChecked() and targets:
+            ordered = sorted(targets, key=lambda idx: (idx.row(), idx.column()))
+            first = ordered[0]
+            base_text = self._editor._model.data(first, QtCore.Qt.ItemDataRole.DisplayRole)
+            if base_text is None:
+                return
+            base_text = str(base_text).strip()
+            if not base_text.isdigit():
+                return
+            base = int(base_text)
+            for offset, index in enumerate(ordered):
+                if index.isValid():
+                    self._editor._model.setData(index, str(base + offset))
+            return
         new_value = self._value_edit.toPlainText()
         for index in targets:
             if index.isValid():

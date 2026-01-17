@@ -72,6 +72,7 @@ class EditorWidget(QtWidgets.QWidget):
         self._model = CSVTableModel(self._document, self)
         self._table_view.setModel(self._model)
         self._table_view.selectionModel().currentChanged.connect(self._on_current_cell_changed)
+        self._table_view.selectionModel().selectionChanged.connect(self._on_selection_changed)
 
         self._toggle_group.buttonToggled.connect(self._on_toggle)
         self._code_edit.textChanged.connect(self._on_code_changed)
@@ -167,6 +168,33 @@ class EditorWidget(QtWidgets.QWidget):
     def _emit_cell_selected(self, row: int, col: int) -> None:
         value = self._cell_text(row, col)
         self.cell_selected.emit(row, col, value)
+
+    def _on_selection_changed(self, *_: object) -> None:
+        if not (QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.KeyboardModifier.AltModifier):
+            return
+        selection = self._table_view.selectionModel().selectedIndexes()
+        if len(selection) < 2:
+            return
+        cols = {index.column() for index in selection}
+        if len(cols) != 1:
+            return
+        current = self._table_view.selectionModel().currentIndex()
+        if not current.isValid():
+            return
+        col = current.column()
+        if col not in cols:
+            return
+        anchor_row = current.row()
+        anchor_value = self._cell_text(anchor_row, col)
+        match = re.match(r"^(.*?)(-?\\d+)([^\\d]*)$", anchor_value)
+        if not match:
+            return
+        prefix, number_text, suffix = match.groups()
+        base = int(number_text)
+        for index in selection:
+            row = index.row()
+            new_value = f"{prefix}{base + (row - anchor_row)}{suffix}"
+            self._model.setData(index, new_value)
 
     def _snapshot(self) -> CsvDocument:
         header = list(self._document.header)
