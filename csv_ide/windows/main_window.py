@@ -1,8 +1,11 @@
 import csv
 import os
+import re
 import shlex
+import shutil
 import subprocess
 import sys
+from datetime import datetime
 from typing import Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -14,6 +17,7 @@ from csv_ide.widgets.editor import EditorWidget
 from csv_ide.widgets.find_panel import FindPanel
 from csv_ide.widgets.relation_panel import RelationPanel
 from csv_ide.widgets.replace_dialog import ReplaceDialog
+from csv_ide.widgets.safe_mode_dialog import SafeModeDialog
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -40,8 +44,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._file_list.itemDoubleClicked.connect(self._open_from_list)
         self._file_list.customContextMenuRequested.connect(self._show_file_list_menu)
         self._search_input.textChanged.connect(self._filter_file_list)
+        self._auto_save_enabled = self._settings.value("auto_save_enabled", False, type=bool)
+        self._auto_save_check = QtWidgets.QCheckBox("Auto Save", self)
+        self._auto_save_check.setChecked(self._auto_save_enabled)
+        self._auto_save_check.toggled.connect(self._on_auto_save_toggled)
+
         left_layout.addWidget(self._search_input)
-        left_layout.addWidget(self._file_list)
+        left_layout.addWidget(self._file_list, 1)
+        left_layout.addWidget(self._auto_save_check)
 
         self._tabs = QtWidgets.QTabWidget(self)
         self._tabs.setTabsClosable(True)
@@ -72,12 +82,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self._current_path: Optional[str] = None
         self._ignore_selection_change = False
         self._replace_dialog: Optional[ReplaceDialog] = None
+        self._safe_mode_dialog: Optional[SafeModeDialog] = None
+        self._safe_mode_timer = QtCore.QTimer(self)
+        self._safe_mode_timer.timeout.connect(self._run_safe_mode_backup)
+        self._auto_save_in_progress = False
+        self._auto_save_debounce_timer = QtCore.QTimer(self)
+        self._auto_save_debounce_timer.setSingleShot(True)
+        self._auto_save_debounce_timer.setInterval(1000)
+        self._auto_save_debounce_timer.timeout.connect(self._auto_save_all)
         self._file_comments = self._load_file_comments()
         self._build_actions()
         self._root_path = self._settings.value("last_root_path", self._root_path, type=str)
         self._apply_theme(self._theme_name)
         self.open_folder(self._root_path)
         self._restore_session_state()
+        self._configure_safe_mode_timer()
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.applicationStateChanged.connect(self._on_application_state_changed)
+            app.focusChanged.connect(self._on_focus_changed)
+            app.aboutToQuit.connect(self._auto_save_all)
 
     def _open_from_list(self, item: QtWidgets.QListWidgetItem) -> None:
         path = item.data(QtCore.Qt.ItemDataRole.UserRole)
@@ -252,6 +276,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         tools_menu = self.menuBar().addMenu("Tools")
         tools_menu.addAction(open_terminal_action)
+        safe_mode_action = QtGui.QAction("Safe Mode...", self)
+        safe_mode_action.triggered.connect(self.open_safe_mode_dialog)
+        tools_menu.addAction(safe_mode_action)
 
         self._plugin_menu = self.menuBar().addMenu("Plugin")
         add_plugin_action = QtGui.QAction("Add Script...", self)
@@ -284,6 +311,7 @@ class MainWindow(QtWidgets.QMainWindow):
             open_action,
             open_folder_action,
             open_terminal_action,
+            safe_mode_action,
             save_action,
             save_as_action,
             save_copy_action,
@@ -387,6 +415,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._replace_dialog.show()
         self._replace_dialog.raise_()
         self._replace_dialog.activateWindow()
+
+    def open_safe_mode_dialog(self) -> None:
+        if self._safe_mode_dialog is None:
+            self._safe_mode_dialog = SafeModeDialog(self)
+        else:
+            self._safe_mode_dialog.refresh_state()
+        self._safe_mode_dialog.show()
+        self._safe_mode_dialog.raise_()
+        self._safe_mode_dialog.activateWindow()
 
     def open_folder(self, path: str) -> None:
         self._root_path = path
@@ -599,6 +636,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if editor:
             self._update_status(editor)
             self._update_window_title(editor)
+        if self._auto_save_enabled and not self._auto_save_in_progress:
+            self._schedule_auto_save()
 
     def _update_status(self, editor: EditorWidget) -> None:
         doc = editor.document
@@ -649,6 +688,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._activate_editor(editor)
 
     def _on_tab_changed(self, index: int) -> None:
+        if self._auto_save_enabled:
+            self._schedule_auto_save()
         widget = self._tabs.widget(index)
         if not isinstance(widget, EditorWidget):
             self._current_path = None
@@ -715,6 +756,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self._auto_save_all()
         for editor in list(self._open_documents.values()):
             if editor.is_dirty():
                 if not self._confirm_discard(editor):
@@ -722,6 +764,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     return
         self._persist_session_state()
         event.accept()
+
+    def leaveEvent(self, event: QtCore.QEvent) -> None:
+        if self._auto_save_enabled:
+            self._schedule_auto_save()
+        super().leaveEvent(event)
 
     def _populate_file_list(self, root_path: str) -> None:
         self._file_list.clear()
@@ -773,6 +820,40 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings.setValue("last_open_files", list(self._open_documents.keys()))
         self._settings.setValue("last_current_file", self._current_path or "")
         self._settings.setValue("last_selected_files", self._selected_paths())
+
+    def _on_auto_save_toggled(self, checked: bool) -> None:
+        self._auto_save_enabled = bool(checked)
+        self._settings.setValue("auto_save_enabled", self._auto_save_enabled)
+
+    def _on_application_state_changed(self, state: QtCore.Qt.ApplicationState) -> None:
+        if state != QtCore.Qt.ApplicationState.ApplicationActive:
+            self._auto_save_all()
+
+    def _on_focus_changed(self, *_: object) -> None:
+        if self._auto_save_enabled:
+            self._schedule_auto_save()
+
+    def _schedule_auto_save(self) -> None:
+        if not self._auto_save_enabled:
+            return
+        if self._auto_save_in_progress:
+            return
+        self._auto_save_debounce_timer.start()
+
+    def _auto_save_all(self) -> None:
+        if not self._auto_save_enabled or self._auto_save_in_progress:
+            return
+        self._auto_save_in_progress = True
+        saved = 0
+        try:
+            for editor in list(self._open_documents.values()):
+                if editor.is_dirty():
+                    if self._save_editor(editor, editor.document.path, update_path=False):
+                        saved += 1
+        finally:
+            self._auto_save_in_progress = False
+        if saved:
+            self._status_bar.showMessage(f"Auto Save: saved {saved} file(s)")
 
     def _restore_session_state(self) -> None:
         last_selected = self._settings.value("last_selected_files", [], type=list)
@@ -849,3 +930,110 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _persist_file_comments(self) -> None:
         self._settings.setValue("file_comments", self._file_comments)
+
+    def _configure_safe_mode_timer(self) -> None:
+        interval = self._settings.value("safe_mode_interval_min", 5, type=int)
+        backup_path = self._settings.value("safe_mode_backup_path", "", type=str).strip()
+        files = self._settings.value("safe_mode_files", [], type=list)
+        files = [path for path in files if isinstance(path, str)]
+
+        if interval <= 0 or not backup_path or not files:
+            self._safe_mode_timer.stop()
+            return
+        self._safe_mode_timer.setInterval(interval * 60 * 1000)
+        if not self._safe_mode_timer.isActive():
+            self._safe_mode_timer.start()
+
+    def _run_safe_mode_backup(self) -> None:
+        interval = self._settings.value("safe_mode_interval_min", 5, type=int)
+        backup_path = self._settings.value("safe_mode_backup_path", "", type=str).strip()
+        files = self._settings.value("safe_mode_files", [], type=list)
+        files = [path for path in files if isinstance(path, str)]
+
+        if interval <= 0 or not backup_path or not files:
+            self._safe_mode_timer.stop()
+            return
+
+        try:
+            os.makedirs(backup_path, exist_ok=True)
+        except OSError as exc:
+            self._status_bar.showMessage(f"Safe Mode backup failed: {exc}")
+            return
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_entries: list[str] = []
+        saved = 0
+        for path in files:
+            if not os.path.exists(path):
+                continue
+            base = os.path.basename(path)
+            name, ext = os.path.splitext(base)
+            backup_name = f"{name}_{timestamp}{ext}"
+            dest = os.path.join(backup_path, backup_name)
+            try:
+                shutil.copy2(path, dest)
+            except OSError:
+                continue
+            log_entries.append(f"{timestamp} | {base} -> {dest}")
+            saved += 1
+
+        if saved:
+            history = self._settings.value("safe_mode_backup_log", [], type=list)
+            history = [entry for entry in history if isinstance(entry, str)]
+            history.extend(log_entries)
+            history = history[-200:]
+            self._settings.setValue("safe_mode_backup_log", history)
+            if self._safe_mode_dialog is not None:
+                self._safe_mode_dialog.refresh_log(history)
+            self._status_bar.showMessage(f"Safe Mode: backed up {saved} file(s)")
+        else:
+            self._status_bar.showMessage("Safe Mode: no backups created")
+
+    def _restore_safe_mode_backup(self, backup_path: str) -> None:
+        if not os.path.exists(backup_path):
+            QtWidgets.QMessageBox.warning(self, "Restore failed", "Backup file not found.")
+            return
+        base = os.path.basename(backup_path)
+        name, ext = os.path.splitext(base)
+        match = re.match(r"^(.*)_\d{8}_\d{6}$", name)
+        if match:
+            target_name = f"{match.group(1)}{ext}"
+        else:
+            target_name = base
+        target_path = os.path.join(self._root_path or "", target_name)
+        if not self._root_path:
+            QtWidgets.QMessageBox.warning(self, "Restore failed", "No workspace folder set.")
+            return
+        try:
+            shutil.copy2(backup_path, target_path)
+        except OSError as exc:
+            QtWidgets.QMessageBox.warning(self, "Restore failed", str(exc))
+            return
+        self._status_bar.showMessage(f"Safe Mode: restored {target_name}")
+
+    def _delete_safe_mode_backups(self, backup_paths: list[str]) -> None:
+        if not backup_paths:
+            return
+        deleted = 0
+        for path in backup_paths:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    deleted += 1
+            except OSError:
+                continue
+        history = self._settings.value("safe_mode_backup_log", [], type=list)
+        history = [entry for entry in history if isinstance(entry, str)]
+        selected = {path for path in backup_paths if isinstance(path, str)}
+        history = [entry for entry in history if self._backup_entry_path(entry) not in selected]
+        self._settings.setValue("safe_mode_backup_log", history)
+        if self._safe_mode_dialog is not None:
+            self._safe_mode_dialog.refresh_log(history)
+        self._status_bar.showMessage(
+            f"Safe Mode: removed {len(selected)} entr(y/ies), deleted {deleted} file(s)"
+        )
+
+    def _backup_entry_path(self, entry: str) -> str:
+        if " -> " not in entry:
+            return ""
+        return entry.split(" -> ", 1)[1].strip()
