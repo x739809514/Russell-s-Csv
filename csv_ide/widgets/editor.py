@@ -11,13 +11,21 @@ class EditorWidget(QtWidgets.QWidget):
     document_changed = QtCore.pyqtSignal(str)
     cell_selected = QtCore.pyqtSignal(int, int, str)
 
-    def __init__(self, document: CsvDocument, parent: Optional[QtWidgets.QWidget] = None) -> None:
+    def __init__(
+        self,
+        document: CsvDocument,
+        parent: Optional[QtWidgets.QWidget] = None,
+        raw_text: Optional[str] = None,
+        parse_error: Optional[str] = None,
+    ) -> None:
         super().__init__(parent)
         self._document = document
         self._undo_stack: List[CsvDocument] = []
         self._undo_index = -1
         self._ignore_history = False
         self._dirty = False
+        self._parse_error: Optional[str] = None
+        self._code_source_text: Optional[str] = None
 
         self._toggle_group = QtWidgets.QButtonGroup(self)
         self._grid_button = QtWidgets.QToolButton(self)
@@ -59,7 +67,13 @@ class EditorWidget(QtWidgets.QWidget):
             self._show_col_header_menu
         )
         self._table_view.horizontalHeader().sectionDoubleClicked.connect(self._rename_column_at)
-        self._stack.addWidget(self._table_view)
+        self._grid_stack = QtWidgets.QStackedWidget(self)
+        self._grid_error_label = QtWidgets.QLabel(self)
+        self._grid_error_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self._grid_error_label.setWordWrap(True)
+        self._grid_stack.addWidget(self._table_view)
+        self._grid_stack.addWidget(self._grid_error_label)
+        self._stack.addWidget(self._grid_stack)
 
         self._code_edit = QtWidgets.QPlainTextEdit(self)
         self._code_edit.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
@@ -82,6 +96,16 @@ class EditorWidget(QtWidgets.QWidget):
         self._model.columnsInserted.connect(lambda *_: self._on_model_changed())
         self._model.columnsRemoved.connect(lambda *_: self._on_model_changed())
         self._push_history()
+
+        if raw_text is not None:
+            self._code_source_text = raw_text
+            self._code_edit.setPlainText(raw_text)
+        if parse_error:
+            self._set_parse_error(parse_error)
+            self._code_button.setChecked(True)
+            self._stack.setCurrentIndex(1)
+        else:
+            self._set_parse_error(None)
 
     @property
     def document(self) -> CsvDocument:
@@ -122,12 +146,25 @@ class EditorWidget(QtWidgets.QWidget):
                 raise ValueError(f"Line {idx} has {len(row)} columns, expected {expected_cols}.")
         return CsvDocument(self._document.path, self._document.delimiter, header, rows[1:])
 
+    def _set_parse_error(self, message: Optional[str]) -> None:
+        self._parse_error = message
+        if message:
+            self._grid_error_label.setText(
+                "CSV parse error. Check the Code view for details.\n\n" + message
+            )
+            self._grid_stack.setCurrentWidget(self._grid_error_label)
+        else:
+            self._grid_stack.setCurrentWidget(self._table_view)
+
     def _on_toggle(self, button: QtWidgets.QAbstractButton, checked: bool) -> None:
         if not checked:
             return
         if button is self._code_button:
             self._code_edit.blockSignals(True)
-            self._code_edit.setPlainText(self._serialize_document())
+            if self._parse_error and self._code_source_text is not None:
+                self._code_edit.setPlainText(self._code_source_text)
+            else:
+                self._code_edit.setPlainText(self._serialize_document())
             self._code_edit.blockSignals(False)
             self._stack.setCurrentIndex(1)
         else:
@@ -135,18 +172,23 @@ class EditorWidget(QtWidgets.QWidget):
             try:
                 parsed = self._parse_csv_text(text)
             except ValueError as exc:
-                QtWidgets.QMessageBox.warning(self, "CSV Parse Error", str(exc))
-                self._code_button.setChecked(True)
+                self._code_source_text = text
+                self._set_parse_error(str(exc))
+                self._stack.setCurrentIndex(0)
                 return
             if parsed is not None:
                 self._document = parsed
                 self._model.set_document(parsed)
                 self._push_history()
                 self.document_changed.emit(parsed.path)
+            self._code_source_text = None
+            self._set_parse_error(None)
             self._stack.setCurrentIndex(0)
 
     def _on_code_changed(self) -> None:
         if self._stack.currentIndex() == 1:
+            if self._parse_error is not None:
+                self._code_source_text = self._code_edit.toPlainText()
             self._dirty = True
             self.document_changed.emit(self._document.path)
 

@@ -130,11 +130,21 @@ class MainWindow(QtWidgets.QMainWindow):
         delimiter = "\t" if path.lower().endswith(".tsv") else ","
         try:
             document = self._load_document(path, delimiter)
-        except (OSError, ValueError) as exc:
+            editor = EditorWidget(document, self)
+        except ValueError as exc:
+            try:
+                with open(path, "r", encoding="utf-8", newline="") as handle:
+                    raw_text = handle.read()
+            except OSError as read_exc:
+                QtWidgets.QMessageBox.warning(self, "Open failed", str(read_exc))
+                return
+            document = CsvDocument(path, delimiter, [], [])
+            editor = EditorWidget(document, self, raw_text=raw_text, parse_error=str(exc))
+            self._status_bar.showMessage("CSV parse error. Check the Code view.", 5000)
+        except OSError as exc:
             QtWidgets.QMessageBox.warning(self, "Open failed", str(exc))
             return
 
-        editor = EditorWidget(document, self)
         editor.document_changed.connect(self._on_document_changed)
         editor.cell_selected.connect(
             lambda row, col, value, ed=editor: self._cell_panel.update_cell(ed, row, col, value)
