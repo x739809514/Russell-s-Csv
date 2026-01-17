@@ -1,17 +1,17 @@
-# RussellCsv 详细使用说明
+# RussellCsv Detailed Guide
 
-本文档包含 RussellCsv 的功能介绍、界面说明与详细操作指引。
+This document provides a comprehensive overview of RussellCsv, including features, UI layout, and step-by-step usage.
 
-## 工具简介
-RussellCsv 是一个基于 PyQt6 的 CSV/TSV 桌面编辑器，提供表格网格视图与源码视图切换、批量编辑、查找替换、关系图预览、安全备份等能力，适用于维护大量 CSV 数据。
+## Overview
+RussellCsv is a PyQt6-based CSV/TSV desktop editor. It offers a spreadsheet-style grid, a raw code view, batch editing tools, find/replace, relation visualization, and safe backups for large CSV workflows.
 
-## 安装与启动
-### 方式一：macOS 一键启动
-1. 双击 `CSV-IDE.command`
-2. 首次运行会自动创建 `.venv` 并安装依赖
-3. 程序启动后进入主界面
+## Install and launch
+### Option 1: macOS launcher
+1. Double-click `CSV-IDE.command`
+2. On first run it creates `.venv` and installs dependencies
+3. The app launches automatically
 
-### 方式二：手动启动
+### Option 2: manual
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
@@ -19,176 +19,172 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## 界面结构说明
-- 左侧：文件列表与筛选框
-- 中间：多标签编辑区（Grid / Code 视图）
-- 右侧：工具面板（Find / Cell）
-- 底部：状态栏（编码、行列数、选中单元格数量）
-- 顶部菜单：File / Edit / Tools / Plugin / View
+## UI layout
+- Left: file list and filter box
+- Center: multi-tab editor (Grid / Code views)
+- Right: tool panels (Find / Cell)
+- Bottom: status bar (encoding, row/column counts, selected cell count)
+- Top menu: File / Edit / Tools / Plugin / View / Help
 
-## 基本工作流
-### 1) 打开工程目录
-- 菜单 `File > Open Folder...`
-- 左侧列表会递归展示该目录下的 `.csv` / `.tsv` 文件
+## Basic workflow
+### 1) Open a workspace folder
+- `File > Open Folder...`
+- The left list shows all `.csv` / `.tsv` files under that folder
 
-### 2) 打开或新建文件
-- 双击左侧文件可打开
-- 菜单 `File > Open File...` 可单独打开某个文件
-- 菜单 `File > New` 创建新文件（默认含 `column1`）
+### 2) Open or create files
+- Double-click a file in the list to open
+- `File > Open File...` opens a specific file
+- `File > New` creates a new file (default header `column1`)
 
-### 3) 保存
-- `File > Save` 保存当前文件
-- `File > Save As...` 另存为并更新当前文件路径
-- `File > Save Copy...` 另存为副本，保持当前文件路径不变
-- `File > Save All` 保存所有已打开且有改动的文件
+### 3) Save
+- `File > Save` saves the current file
+- `File > Save As...` saves to a new path and updates the tab
+- `File > Save Copy...` saves a copy without changing the active file
+- `File > Save All` saves all modified open files
 
-### 4) 重命名
-- `File > Rename File...` 输入新文件名后重命名
+### 4) Rename
+- `File > Rename File...` renames the current file on disk
 
-### 5) 关闭与会话恢复
-- 关闭标签页会提示保存未保存的改动
-- 退出时会记录最后打开的文件与选中的文件
-- 下次启动会自动恢复会话状态
+### 5) Close and restore
+- Closing a tab prompts to save unsaved changes
+- On exit, the app persists last opened files and selection
+- Next launch restores the previous session
 
-## 编辑功能详解
-### 1) Grid 视图（表格编辑）
-- 直接单元格编辑
-- `Delete/Backspace` 清空选中单元格
-- 右键表格：
+## Editing features
+### 1) Grid view (table editing)
+- Direct cell editing
+- `Delete/Backspace` clears selected cells
+- Table right-click menu:
   - Insert Row Above / Below
   - Delete Row(s)
   - Insert Column Left / Right
   - Delete Column(s)
-- 行头/列表头右键：
-  - 插入行/列
-  - 删除行/列
-  - 列头双击或右键 `Rename Column` 重命名列
+- Row/column header right-click menu:
+  - Insert row/column
+  - Delete row/column
+  - Rename Column (or double-click column header)
 
-### 2) Code 视图（源码编辑）
-- 使用 CSV 文本编辑
-- 切换回 Grid 时会重新解析文本
-- 如果行列数不一致，会提示 CSV Parse Error
+### 2) Code view (raw CSV text)
+- Edit as plain CSV text
+- Switching back to Grid re-parses the content
+- Row/column mismatch triggers a CSV Parse Error
 
 ### 3) Undo / Redo
-- 菜单 `Edit > Undo / Redo`
-- 支持表格编辑与插入删除的撤销重做
+- `Edit > Undo / Redo`
+- Supports grid edits and insert/delete operations
 
-### 4) 单元格批量填充
-- 选中同一列多个单元格，按住 `Alt` 并选中范围
-- 若当前值符合 `prefix + number + suffix` 模式（如 `item_001`）
-  会自动按行号递增填充
+### 4) Incremental fill
+- Select multiple cells in the same column while holding `Alt`
+- If the anchor value matches `prefix + number + suffix` (e.g. `item_001`)
+  the app auto-increments values by row offset
 
-## 查找与替换
-### Find 面板（右侧）
-- 输入关键字点击 `Find Next`
-- `Find All` 显示结果列表，双击跳转到对应单元格
-- 支持大小写匹配
+## Find and replace
+### Find panel (right side)
+- Enter text and click `Find Next`
+- `Find All` lists matches; double-click a result to jump
+- Optional case-sensitive search
 
-### Replace 对话框
+### Replace dialog
 - `Edit > Replace...`
-- 支持替换当前匹配与替换全部
-- 支持大小写匹配
+- Replace current match or replace all
+- Optional case-sensitive match
 
-## Cell 面板（右侧）
-- 展示当前选中单元格坐标和内容
-- 支持编辑当前值并点击 `Apply` 更新
-- 支持选中多个单元格后统一赋值
-- 勾选 `Increment` 且数值为整数时，可自动递增填充
-- 在输入框内按 `Enter` 提交（`Shift+Enter` 换行）
+## Cell panel (right side)
+- Shows current cell location and value
+- Edit value and click `Apply`
+- Supports multi-cell updates
+- `Increment` applies numeric increments when values are integers
+- Press `Enter` to apply (`Shift+Enter` inserts a newline)
 
-## 文件列表与筛选
-- 左侧输入框支持按文件名或注释过滤
-- 右键文件可添加或移除备注（Comment）
-- 备注内容会作为筛选关键字
+## File list and filtering
+- Filter by filename or comment text
+- Right-click a file to add/remove a comment
+- Comments are used for filtering and shown as tooltips
 
-## 自动保存
-- 左侧 `Auto Save` 勾选后自动保存
-- 切换标签、失去焦点或应用进入后台时触发保存
-- 状态栏会显示 Auto Save 结果
+## Auto Save
+- Toggle `Auto Save` under the file list
+- Triggers on tab switch, focus loss, or app deactivation
+- Status bar shows auto-save results
 
-## Safe Mode（自动备份）
-入口：`Tools > Safe Mode...`
+## Safe Mode (automatic backups)
+Entry: `Tools > Safe Mode...`
 
-功能说明：定时将指定 CSV 文件复制到备份目录，并在界面中维护备份历史。
+Safe Mode periodically copies selected CSV files to a backup folder and maintains a backup log.
 
-设置步骤：
-1. 设定备份间隔（分钟）
-2. 选择备份目录
-3. 添加需要备份的 CSV/TSV 文件
-4. 点击 `Backup Now` 可立即备份一次
+Setup:
+1. Set backup interval in minutes
+2. Choose a backup folder
+3. Add CSV/TSV files to protect
+4. Use `Backup Now` for an immediate run
 
-备份管理：
-- 日志列表显示备份时间与目标路径
-- 可选择日志项执行 `Reload Selected Backup` 覆盖恢复
-- 可删除选中备份文件
+Backup management:
+- Log shows timestamp and backup path
+- `Reload Selected Backup` overwrites the original file
+- Delete selected backups from disk
 
-注意：Safe Mode 需要同时设置“间隔 + 备份目录 + 文件列表”才会自动运行。
+Note: Safe Mode only runs when interval, backup folder, and file list are all set.
 
-## 关系编辑与关系图
-### 关系编辑器
-入口：`Tools > Edit Relations...`
+## Relations and graph
+### Relation editor
+Entry: `Tools > Edit Relations...`
 
-作用：维护 CSV 表之间的字段关系，保存到 `relations.json`。
+Use this to define relations between tables, saved to `relations.json`.
 
-用法：
-1. 打开某个 CSV 文件，作为 “当前表”
-2. 选择当前表字段（From field）
-3. 选择目标表与目标字段（To table / To field）
-4. 选择关系类型（one_to_one / one_to_many）
-5. 点击 `Add Relation`
+Steps:
+1. Open a CSV file (becomes the current table)
+2. Choose a field from the current table
+3. Select a target table and field
+4. Choose relation type (`one_to_one` or `one_to_many`)
+5. Click `Add Relation`
 
-Header row 设置：
-- 可以输入 `head` 或数字（如 `4`）
-- 表示读取表头的行号
+Header row setting:
+- Enter `head` or a row number (e.g. `4`) to determine header row
 
-### 关系图预览
-入口：`Tools > Relationship Graph...`
+### Relationship graph
+Entry: `Tools > Relationship Graph...`
 
-功能：
-- 以图形方式预览表之间关系
-- 支持拖拽节点并保存布局
-- 布局保存到 `relation_layout.json`
+- Visualizes relations as a graph
+- Nodes are draggable and layout is saved to `relation_layout.json`
 
-### 导入关系配置
-入口：`Tools > Import Relation Config...`
+### Import relation config
+Entry: `Tools > Import Relation Config...`
 
-说明：
-- 可导入 `relations` 或布局 `nodes` 配置
-- 自动写入 `relations.json` / `relation_layout.json`
+- Imports `relations` or layout `nodes` from JSON
+- Writes to `relations.json` and/or `relation_layout.json`
 
-## HTML 预览
-工具支持 HTML 预览窗口（用于关系图与可视化文本）。
-- 若内容为 HTML，会直接渲染
-- 若内容类似 Mermaid 语法（graph/flowchart），会渲染为简易图形
-- 支持鼠标拖拽与缩放
+## HTML preview
+The app includes an HTML preview window used by graph visualization.
+- Full HTML content is rendered as-is
+- Mermaid-like `graph` / `flowchart` text is rendered as a simple diagram
+- Supports pan/zoom and drag for nodes when enabled
 
-## 插件脚本（Plugin）
-入口：`Plugin > Add Script...`
+## Plugin scripts
+Entry: `Plugin > Add Script...`
 
-- 选择本地 Python 脚本并加入插件菜单
-- 点击脚本名称可运行
-- 输出结果或错误会弹窗提示
-- 脚本工作目录为当前打开的根目录
+- Add local Python scripts to the Plugin menu
+- Run a script by clicking its name
+- Output or errors are shown in a dialog
+- Script working directory is the current workspace
 
-## 主题
-入口：`View > Light Theme / Dark Theme`
+## Themes
+Entry: `View > Light Theme / Dark Theme`
 
-- 可切换浅色与深色主题
-- 主题设置会持久保存
+- Switch between light and dark themes
+- Theme setting persists across sessions
 
-## 数据格式与限制
-- 仅支持 `.csv` / `.tsv`
-- 默认使用 UTF-8 读写
-- 第一行作为表头
-- 保存时根据扩展名选择分隔符（`.csv` 为 `,`，`.tsv` 为 `\t`）
-- 若 CSV 行列数不一致，会提示解析错误并阻止切换到 Grid 视图
+## Data format and limits
+- Only `.csv` / `.tsv` supported
+- UTF-8 read/write
+- First row is the header
+- Delimiter is inferred from file extension (`.csv` = `,`, `.tsv` = `\t`)
+- Mismatched row length triggers a parse error when leaving Code view
 
-## 常见问题
-### Q: 为什么切换到 Grid 时提示解析错误？
-A: Code 视图中的某一行列数与表头列数不一致，需要补齐或删除多余分隔符。
+## FAQ
+### Q: Why do I get a parse error when switching to Grid?
+A: One or more lines have a different column count than the header. Fix or remove extra delimiters.
 
-### Q: 为什么 Safe Mode 不自动运行？
-A: 需要设置备份间隔、备份目录并添加至少一个文件。
+### Q: Why doesn’t Safe Mode run?
+A: You must set interval, backup folder, and add at least one file.
 
-### Q: 关系图没有节点？
-A: 需要在 Relation Editor 中先添加关系数据。
+### Q: The relationship graph is empty. Why?
+A: Add relations in the Relation Editor first.

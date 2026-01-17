@@ -315,6 +315,11 @@ class MainWindow(QtWidgets.QMainWindow):
         view_menu.addAction(light_theme_action)
         view_menu.addAction(dark_theme_action)
 
+        help_menu = self.menuBar().addMenu("Help")
+        doc_action = QtGui.QAction("Documentation", self)
+        doc_action.triggered.connect(self._open_documentation)
+        help_menu.addAction(doc_action)
+
         # Ensure shortcuts work even when focus is in the table widget.
         for action in (
             new_action,
@@ -341,6 +346,7 @@ class MainWindow(QtWidgets.QMainWindow):
             insert_col_left_action,
             insert_col_right_action,
             delete_cols_action,
+            doc_action,
         ):
             action.setShortcutContext(QtCore.Qt.ShortcutContext.ApplicationShortcut)
             self.addAction(action)
@@ -364,6 +370,15 @@ class MainWindow(QtWidgets.QMainWindow):
         editor = self._current_editor()
         if editor and hasattr(editor, method_name):
             getattr(editor, method_name)()
+
+    def _open_documentation(self) -> None:
+        url = QtCore.QUrl(
+            "https://github.com/x739809514/Russell-s-Csv/blob/main/DOCUMENT.md"
+        )
+        if not QtGui.QDesktopServices.openUrl(url):
+            QtWidgets.QMessageBox.warning(
+                self, "Documentation", "Failed to open documentation URL."
+            )
 
     def _current_editor(self) -> Optional[EditorWidget]:
         widget = self._tabs.currentWidget()
