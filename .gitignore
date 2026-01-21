@@ -1,0 +1,3 @@
+.venv
+csv_ide/__pycache__/
+csv_ide/widgets/__pycache__/
