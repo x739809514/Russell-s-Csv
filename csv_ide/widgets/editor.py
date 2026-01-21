@@ -8,19 +8,19 @@ from csv_ide.models import CsvDocument, CSVTableModel
 
 
 class ConflictHighlighter(QtGui.QSyntaxHighlighter):
-    def __init__(self, document: QtGui.QTextDocument) -> None:
-        super().__init__(document)
-        self._local_format = QtGui.QTextCharFormat()
-        self._local_format.setBackground(QtGui.QColor("#d7ebff"))
-        self._remote_format = QtGui.QTextCharFormat()
-        self._remote_format.setBackground(QtGui.QColor("#d7ffe3"))
+    def __init__(self, parent: QtGui.QTextDocument) -> None:
+        super().__init__(parent)
         self._marker_format = QtGui.QTextCharFormat()
-        self._marker_format.setForeground(QtGui.QColor("#6b6b6b"))
-        self._marker_format.setFontWeight(QtGui.QFont.Weight.Bold)
+        self._marker_format.setForeground(QtGui.QColor("#b00020"))
+        self._marker_format.setBackground(QtGui.QColor("#ffe8e8"))
+        self._ours_format = QtGui.QTextCharFormat()
+        self._ours_format.setBackground(QtGui.QColor("#fff6d6"))
+        self._theirs_format = QtGui.QTextCharFormat()
+        self._theirs_format.setBackground(QtGui.QColor("#e6f6ff"))
 
-    def highlightBlock(self, text: str) -> None:
+    def highlightBlock(self, text: str) -> None:  # noqa: N802 - Qt override
         state = self.previousBlockState()
-        if text.startswith("<<<<<<< "):
+        if text.startswith("<<<<<<<"):
             self.setFormat(0, len(text), self._marker_format)
             self.setCurrentBlockState(1)
             return
@@ -28,19 +28,18 @@ class ConflictHighlighter(QtGui.QSyntaxHighlighter):
             self.setFormat(0, len(text), self._marker_format)
             self.setCurrentBlockState(2)
             return
-        if text.startswith(">>>>>>> "):
+        if text.startswith(">>>>>>>"):
             self.setFormat(0, len(text), self._marker_format)
             self.setCurrentBlockState(0)
             return
         if state == 1:
-            self.setFormat(0, len(text), self._local_format)
+            self.setFormat(0, len(text), self._ours_format)
             self.setCurrentBlockState(1)
-            return
-        if state == 2:
-            self.setFormat(0, len(text), self._remote_format)
+        elif state == 2:
+            self.setFormat(0, len(text), self._theirs_format)
             self.setCurrentBlockState(2)
-            return
-        self.setCurrentBlockState(0)
+        else:
+            self.setCurrentBlockState(0)
 
 
 class EditorWidget(QtWidgets.QWidget):
@@ -60,7 +59,6 @@ class EditorWidget(QtWidgets.QWidget):
         self._undo_index = -1
         self._ignore_history = False
         self._dirty = False
-        self._conflict_mode = False
         self._parse_error: Optional[str] = None
         self._code_source_text: Optional[str] = None
 
@@ -117,7 +115,7 @@ class EditorWidget(QtWidgets.QWidget):
 
         self._code_edit = QtWidgets.QPlainTextEdit(self)
         self._code_edit.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
-        self._code_highlighter = ConflictHighlighter(self._code_edit.document())
+        self._conflict_highlighter = ConflictHighlighter(self._code_edit.document())
         self._stack.addWidget(self._code_edit)
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -164,72 +162,20 @@ class EditorWidget(QtWidgets.QWidget):
         self._model.set_document(document)
         self._push_history()
         self._dirty = False
-        self._conflict_mode = False
-        self._grid_button.setEnabled(True)
+        self._code_source_text = None
+        self._set_parse_error(None)
         if self._stack.currentIndex() == 1:
             self._code_edit.setPlainText(self._serialize_document())
 
-    def reload_document(
-        self,
-        document: CsvDocument,
-        raw_text: Optional[str] = None,
-        parse_error: Optional[str] = None,
-    ) -> None:
-        self._document = document
-        self._model.set_document(document)
-        self._undo_stack = []
-        self._undo_index = -1
-        self._dirty = False
-        self._conflict_mode = False
-        self._grid_button.setEnabled(True)
-        self._code_source_text = None
-        if parse_error:
-            self._code_source_text = raw_text or ""
-            self._code_edit.blockSignals(True)
-            self._code_edit.setPlainText(self._code_source_text)
-            self._code_edit.blockSignals(False)
-            self._set_parse_error(parse_error)
-            self._code_button.setChecked(True)
-            self._stack.setCurrentIndex(1)
-        else:
-            self._set_parse_error(None)
-            if self._stack.currentIndex() == 1:
-                self._code_edit.blockSignals(True)
-                self._code_edit.setPlainText(self._serialize_document())
-                self._code_edit.blockSignals(False)
-        self._push_history()
-        self.document_changed.emit(self._document.path)
-
-    def source_text(self) -> str:
-        if self._stack.currentIndex() == 1:
-            return self._code_edit.toPlainText()
-        return self._serialize_document()
-
-    def _is_conflict_text(self, text: str) -> bool:
-        return "<<<<<<< " in text and "=======" in text and ">>>>>>> " in text
-
-    def has_conflict_markers(self) -> bool:
-        return self._is_conflict_text(self._code_edit.toPlainText())
-
-    def set_conflict_text(self, local_text: str, remote_text: str) -> None:
-        conflict_text = (
-            "<<<<<<< HEAD\n"
-            f"{local_text.rstrip()}\n"
-            "=======\n"
-            f"{remote_text.rstrip()}\n"
-            ">>>>>>> REMOTE\n"
-        )
-        self._conflict_mode = True
-        self._grid_button.setEnabled(False)
+    def show_parse_error(self, raw_text: str, message: str) -> None:
+        self._code_source_text = raw_text
+        self._code_edit.blockSignals(True)
+        self._code_edit.setPlainText(raw_text)
+        self._code_edit.blockSignals(False)
+        self._set_parse_error(message)
         self._code_button.setChecked(True)
         self._stack.setCurrentIndex(1)
-        self._code_edit.blockSignals(True)
-        self._code_edit.setPlainText(conflict_text)
-        self._code_edit.blockSignals(False)
-        self._code_source_text = conflict_text
-        self._set_parse_error("Conflict detected. Resolve in Code view.")
-        self._dirty = True
-        self.document_changed.emit(self._document.path)
+        self._dirty = False
 
     def _serialize_document(self) -> str:
         buffer = io.StringIO()
@@ -273,8 +219,6 @@ class EditorWidget(QtWidgets.QWidget):
             self._code_edit.blockSignals(False)
             self._stack.setCurrentIndex(1)
         else:
-            if self._conflict_mode:
-                return
             text = self._code_edit.toPlainText()
             try:
                 parsed = self._parse_csv_text(text)
@@ -297,14 +241,6 @@ class EditorWidget(QtWidgets.QWidget):
             if self._parse_error is not None:
                 self._code_source_text = self._code_edit.toPlainText()
             self._dirty = True
-            if self._conflict_mode:
-                text = self._code_edit.toPlainText()
-                if not self._is_conflict_text(text):
-                    self._conflict_mode = False
-                    self._grid_button.setEnabled(True)
-                    if self._parse_error == "Conflict detected. Resolve in Code view.":
-                        self._set_parse_error(None)
-                        self._code_source_text = None
             self.document_changed.emit(self._document.path)
 
     def _on_model_changed(self) -> None:
