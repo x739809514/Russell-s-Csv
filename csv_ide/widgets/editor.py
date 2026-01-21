@@ -2,7 +2,7 @@ import csv
 import io
 from typing import List, Optional
 
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 from csv_ide.models import CsvDocument, CSVTableModel
 
@@ -49,6 +49,8 @@ class EditorWidget(QtWidgets.QWidget):
         self._table_view.setAlternatingRowColors(True)
         self._table_view.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectItems)
         self._table_view.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._table_view.setWordWrap(True)
+        self._table_view.setTextElideMode(QtCore.Qt.TextElideMode.ElideNone)
         self._table_view.horizontalHeader().setStretchLastSection(True)
         self._table_view.verticalHeader().setVisible(True)
         self._table_view.installEventFilter(self)
@@ -67,6 +69,7 @@ class EditorWidget(QtWidgets.QWidget):
             self._show_col_header_menu
         )
         self._table_view.horizontalHeader().sectionDoubleClicked.connect(self._rename_column_at)
+        self._table_view.horizontalHeader().sectionResized.connect(self._on_column_resized)
         self._grid_stack = QtWidgets.QStackedWidget(self)
         self._grid_error_label = QtWidgets.QLabel(self)
         self._grid_error_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
@@ -200,12 +203,14 @@ class EditorWidget(QtWidgets.QWidget):
         current = self._table_view.selectionModel().currentIndex()
         if current.isValid():
             self._emit_cell_selected(current.row(), current.column())
+            self._resize_row_to_contents(current.row())
 
     def _on_current_cell_changed(
         self, current: QtCore.QModelIndex, _: QtCore.QModelIndex
     ) -> None:
         if current.isValid():
             self._emit_cell_selected(current.row(), current.column())
+            self._resize_row_to_contents(current.row())
 
     def _emit_cell_selected(self, row: int, col: int) -> None:
         value = self._cell_text(row, col)
@@ -237,6 +242,38 @@ class EditorWidget(QtWidgets.QWidget):
             row = index.row()
             new_value = f"{prefix}{base + (row - anchor_row)}{suffix}"
             self._model.setData(index, new_value)
+
+    def _on_column_resized(self, *_: object) -> None:
+        self._resize_current_row_height()
+
+    def _resize_current_row_height(self) -> None:
+        current = self._table_view.selectionModel().currentIndex()
+        if current.isValid():
+            self._resize_row_to_contents(current.row())
+
+    def _resize_row_to_contents(self, row: int) -> None:
+        if row < 0:
+            return
+        font = self._table_view.font()
+        default_height = self._table_view.verticalHeader().defaultSectionSize()
+        max_height = default_height
+        padding = 6
+        col_count = self._model.columnCount()
+        for col in range(col_count):
+            index = self._model.index(row, col)
+            text = self._model.data(index, QtCore.Qt.ItemDataRole.DisplayRole)
+            if text is None:
+                text = ""
+            width = max(self._table_view.columnWidth(col) - padding * 2, 1)
+            doc = QtGui.QTextDocument()
+            doc.setDefaultFont(font)
+            doc.setPlainText(str(text))
+            doc.setTextWidth(width)
+            height = int(doc.size().height()) + padding * 2
+            if height > max_height:
+                max_height = height
+        if self._table_view.rowHeight(row) != max_height:
+            self._table_view.setRowHeight(row, max_height)
 
     def _snapshot(self) -> CsvDocument:
         header = list(self._document.header)
@@ -366,10 +403,71 @@ class EditorWidget(QtWidgets.QWidget):
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
         if obj is self._table_view and event.type() == QtCore.QEvent.Type.KeyPress:
+            if event.matches(QtGui.QKeySequence.StandardKey.Copy):
+                self._copy_selection_to_clipboard()
+                return True
+            if event.matches(QtGui.QKeySequence.StandardKey.Paste):
+                self._paste_from_clipboard()
+                return True
             if event.key() in (QtCore.Qt.Key.Key_Delete, QtCore.Qt.Key.Key_Backspace):
                 self._clear_selected_cells()
                 return True
         return super().eventFilter(obj, event)
+
+    def _copy_selection_to_clipboard(self) -> None:
+        selection = self._table_view.selectionModel().selectedIndexes()
+        if not selection:
+            current = self._table_view.selectionModel().currentIndex()
+            if current.isValid():
+                selection = [current]
+            else:
+                return
+        rows = sorted({index.row() for index in selection})
+        cols = sorted({index.column() for index in selection})
+        min_row, max_row = rows[0], rows[-1]
+        min_col, max_col = cols[0], cols[-1]
+        row_count = max_row - min_row + 1
+        col_count = max_col - min_col + 1
+        grid = [[""] * col_count for _ in range(row_count)]
+        for index in selection:
+            r = index.row() - min_row
+            c = index.column() - min_col
+            value = self._model.data(index, QtCore.Qt.ItemDataRole.DisplayRole)
+            grid[r][c] = "" if value is None else str(value)
+        text = "\n".join("\t".join(row) for row in grid)
+        QtWidgets.QApplication.clipboard().setText(text)
+
+    def _paste_from_clipboard(self) -> None:
+        current = self._table_view.selectionModel().currentIndex()
+        if not current.isValid():
+            return
+        text = QtWidgets.QApplication.clipboard().text()
+        if not text:
+            return
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        reader = csv.reader(io.StringIO(text), delimiter="\t")
+        rows = [row for row in reader]
+        while rows and all(cell == "" for cell in rows[-1]):
+            rows.pop()
+        if not rows:
+            return
+        start_row = current.row()
+        start_col = current.column()
+        max_cols = self._model.columnCount()
+        if start_col >= max_cols:
+            return
+        needed_rows = start_row + len(rows) - self._model.rowCount()
+        if needed_rows > 0:
+            self._model.insertRows(self._model.rowCount(), needed_rows)
+        for r, row in enumerate(rows):
+            if not row:
+                continue
+            row = row[: max_cols - start_col]
+            for c, value in enumerate(row):
+                index = self._model.index(start_row + r, start_col + c)
+                if index.isValid():
+                    self._model.setData(index, value)
+        self._resize_row_to_contents(start_row)
 
     def _show_row_header_menu(self, position: QtCore.QPoint) -> None:
         row = self._table_view.verticalHeader().logicalIndexAt(position)

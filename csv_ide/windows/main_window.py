@@ -245,7 +245,7 @@ class MainWindow(QtWidgets.QMainWindow):
         delete_cols_action = QtGui.QAction("Delete Column(s)", self)
         delete_cols_action.triggered.connect(lambda: self._apply_to_current("delete_cols"))
         delete_cols_action.setShortcuts(
-            [QtGui.QKeySequence("Ctrl+Shift+Backspace"), QtGui.QKeySequence("Meta+Shift+Backspace")]
+            [QtGui.QKeySequence("Ctrl+Backspace"), QtGui.QKeySequence("Meta+Backspace")]
         )
         delete_cols_action.setShortcutVisibleInContextMenu(True)
 
@@ -575,7 +575,8 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Plugin failed", f"Script not found:\n{path}")
             return
         process = QtCore.QProcess(self)
-        process.setProgram(sys.executable)
+        python_exe = shutil.which("python3") or sys.executable
+        process.setProgram(python_exe)
         process.setArguments([path])
         process.setWorkingDirectory(self._root_path)
         process.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.SeparateChannels)
@@ -600,6 +601,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 if details:
                     message = f"{message}\n\n{details}"
                 QtWidgets.QMessageBox.warning(self, "Plugin failed", message)
+            elif stderr_text:
+                message = "Script finished with warnings."
+                message = f"{message}\n\n{stderr_text}"
+                if stdout_text:
+                    message = f"{message}\n\n{stdout_text}"
+                QtWidgets.QMessageBox.warning(self, "Plugin warnings", message)
             else:
                 message = "Script finished successfully."
                 if stdout_text:
