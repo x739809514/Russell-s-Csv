@@ -91,6 +91,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._auto_save_debounce_timer.setSingleShot(True)
         self._auto_save_debounce_timer.setInterval(1000)
         self._auto_save_debounce_timer.timeout.connect(self._auto_save_all)
+        self._file_watch_timer = QtCore.QTimer(self)
+        self._file_watch_timer.setInterval(2000)
+        self._file_watch_timer.timeout.connect(self._check_external_changes)
+        self._file_watch_timer.start()
+        self._file_list_timer = QtCore.QTimer(self)
+        self._file_list_timer.setInterval(5000)
+        self._file_list_timer.timeout.connect(self._refresh_file_list_if_changed)
+        self._file_list_timer.start()
+        self._file_stats: dict[str, tuple[float, int]] = {}
+        self._external_dirty_paths: set[str] = set()
+        self._file_list_snapshot: set[str] = set()
         self._file_comments = self._load_file_comments()
         self._build_actions()
         self._root_path = self._settings.value("last_root_path", self._root_path, type=str)
@@ -150,6 +161,7 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda row, col, value, ed=editor: self._cell_panel.update_cell(ed, row, col, value)
         )
         self._open_documents[path] = editor
+        self._record_file_state(path)
 
         self._show_tab(editor)
         self._persist_session_state()
@@ -521,6 +533,111 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings.setValue("last_root_path", path)
         self._populate_file_list(path)
 
+    def _stat_file(self, path: str) -> Optional[tuple[float, int]]:
+        try:
+            stat = os.stat(path)
+        except OSError:
+            return None
+        return (stat.st_mtime, stat.st_size)
+
+    def _record_file_state(self, path: str) -> None:
+        state = self._stat_file(path)
+        if state is not None:
+            self._file_stats[path] = state
+
+    def _read_file_text(self, path: str) -> Optional[str]:
+        try:
+            with open(path, "r", encoding="utf-8", newline="") as handle:
+                return handle.read()
+        except OSError:
+            return None
+
+    def _has_external_change(self, path: str) -> bool:
+        current = self._stat_file(path)
+        if current is None:
+            return False
+        known = self._file_stats.get(path)
+        if known is None:
+            self._file_stats[path] = current
+            return False
+        return current != known
+
+    def _reload_editor_from_disk(self, editor: EditorWidget) -> None:
+        path = editor.document.path
+        delimiter = "\t" if path.lower().endswith(".tsv") else ","
+        try:
+            document = self._load_document(path, delimiter)
+            editor.reload_document(document)
+            self._record_file_state(path)
+            self._external_dirty_paths.discard(path)
+            self._status_bar.showMessage(f"Reloaded: {os.path.basename(path)}")
+        except ValueError as exc:
+            try:
+                with open(path, "r", encoding="utf-8", newline="") as handle:
+                    raw_text = handle.read()
+            except OSError as read_exc:
+                QtWidgets.QMessageBox.warning(self, "Reload failed", str(read_exc))
+                return
+            document = CsvDocument(path, delimiter, [], [])
+            editor.reload_document(document, raw_text=raw_text, parse_error=str(exc))
+            self._record_file_state(path)
+            self._external_dirty_paths.discard(path)
+            self._status_bar.showMessage("CSV parse error. Check the Code view.", 5000)
+        except OSError as exc:
+            QtWidgets.QMessageBox.warning(self, "Reload failed", str(exc))
+
+    def _check_external_changes(self) -> None:
+        for path, editor in list(self._open_documents.items()):
+            if not os.path.exists(path):
+                continue
+            if not self._has_external_change(path):
+                continue
+            if editor.is_dirty():
+                if path in self._external_dirty_paths:
+                    continue
+                remote_text = self._read_file_text(path)
+                if remote_text is None:
+                    continue
+                local_text = editor.source_text()
+                editor.set_conflict_text(local_text, remote_text)
+                self._record_file_state(path)
+                self._external_dirty_paths.add(path)
+                self._status_bar.showMessage(
+                    f"Conflict: {os.path.basename(path)} changed on disk"
+                )
+            else:
+                self._reload_editor_from_disk(editor)
+
+    def _scan_csv_paths(self, root_path: str) -> set[str]:
+        paths: set[str] = set()
+        for root, _, files in os.walk(root_path):
+            for name in files:
+                _, ext = os.path.splitext(name)
+                if ext.lower() in {".csv", ".tsv"}:
+                    paths.add(os.path.join(root, name))
+        return paths
+
+    def _refresh_file_list_if_changed(self) -> None:
+        if not self._root_path:
+            return
+        current = self._scan_csv_paths(self._root_path)
+        if current == self._file_list_snapshot:
+            return
+        selected = self._selected_paths()
+        current_item = self._file_list.currentItem()
+        current_path = None
+        if current_item is not None:
+            data = current_item.data(QtCore.Qt.ItemDataRole.UserRole)
+            if isinstance(data, str):
+                current_path = data
+        self._populate_file_list(self._root_path)
+        if selected:
+            self._ignore_selection_change = True
+            self._select_paths(selected)
+            self._ignore_selection_change = False
+        if current_path:
+            self._select_path(current_path)
+
     def open_terminal_here(self) -> None:
         if not self._root_path:
             return
@@ -692,6 +809,9 @@ class MainWindow(QtWidgets.QMainWindow):
         editor.document.path = new_path
         self._open_documents.pop(current_path, None)
         self._open_documents[new_path] = editor
+        self._file_stats.pop(current_path, None)
+        self._external_dirty_paths.discard(current_path)
+        self._record_file_state(new_path)
         self._update_window_title(editor)
         self._update_list_item_path(current_path, new_path)
         self._status_bar.showMessage(f"Renamed to: {os.path.basename(new_path)}")
@@ -711,6 +831,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
         path = editor.document.path
         self._open_documents.pop(path, None)
+        self._file_stats.pop(path, None)
+        self._external_dirty_paths.discard(path)
         self._tabs.removeTab(index)
         editor.deleteLater()
         if self._tabs.count() == 0:
@@ -823,6 +945,13 @@ class MainWindow(QtWidgets.QMainWindow):
         return False
 
     def _save_editor(self, editor: EditorWidget, path: str, update_path: bool) -> bool:
+        if editor.has_conflict_markers():
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Resolve Conflicts",
+                "Conflict markers detected. Resolve them in Code view before saving.",
+            )
+            return False
         if not editor.sync_from_code_view():
             return False
         doc = editor.document
@@ -842,10 +971,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 doc.delimiter = delimiter
                 self._open_documents.pop(old_path, None)
                 self._open_documents[path] = editor
+                self._file_stats.pop(old_path, None)
+                self._external_dirty_paths.discard(old_path)
                 self._update_list_item_path(old_path, path)
                 if self._current_path == old_path:
                     self._current_path = path
             editor.set_dirty(False)
+            self._record_file_state(path)
+            self._external_dirty_paths.discard(path)
             self._update_window_title(editor)
             self._status_bar.showMessage(f"Saved: {os.path.basename(path)}")
             return True
@@ -882,6 +1015,7 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setData(QtCore.Qt.ItemDataRole.UserRole, full_path)
             item.setToolTip(self._item_tooltip(full_path))
             self._file_list.addItem(item)
+        self._file_list_snapshot = {path for _, path in entries}
 
     def _filter_file_list(self, text: str) -> None:
         text = text.strip().lower()
@@ -946,6 +1080,14 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             for editor in list(self._open_documents.values()):
                 if editor.is_dirty():
+                    path = editor.document.path
+                    if path in self._external_dirty_paths:
+                        continue
+                    if editor.has_conflict_markers():
+                        continue
+                    if self._has_external_change(path):
+                        self._external_dirty_paths.add(path)
+                        continue
                     if self._save_editor(editor, editor.document.path, update_path=False):
                         saved += 1
         finally:
