@@ -45,6 +45,7 @@ class ConflictHighlighter(QtGui.QSyntaxHighlighter):
 class EditorWidget(QtWidgets.QWidget):
     document_changed = QtCore.pyqtSignal(str)
     cell_selected = QtCore.pyqtSignal(int, int, str)
+    table_state_changed = QtCore.pyqtSignal()
 
     def __init__(
         self,
@@ -61,6 +62,7 @@ class EditorWidget(QtWidgets.QWidget):
         self._dirty = False
         self._parse_error: Optional[str] = None
         self._code_source_text: Optional[str] = None
+        self._custom_row_heights: dict[int, int] = {}
 
         self._toggle_group = QtWidgets.QButtonGroup(self)
         self._grid_button = QtWidgets.QToolButton(self)
@@ -100,6 +102,7 @@ class EditorWidget(QtWidgets.QWidget):
         self._table_view.verticalHeader().customContextMenuRequested.connect(
             self._show_row_header_menu
         )
+        self._table_view.verticalHeader().sectionResized.connect(self._on_row_resized)
         self._table_view.horizontalHeader().customContextMenuRequested.connect(
             self._show_col_header_menu
         )
@@ -293,6 +296,15 @@ class EditorWidget(QtWidgets.QWidget):
 
     def _on_column_resized(self, *_: object) -> None:
         self._resize_current_row_height()
+        self.table_state_changed.emit()
+
+    def _on_row_resized(self, row: int, _: int, new_size: int) -> None:
+        default_height = self._table_view.verticalHeader().defaultSectionSize()
+        if new_size == default_height:
+            self._custom_row_heights.pop(row, None)
+        else:
+            self._custom_row_heights[row] = new_size
+        self.table_state_changed.emit()
 
     def _resize_current_row_height(self) -> None:
         current = self._table_view.selectionModel().currentIndex()
@@ -322,6 +334,43 @@ class EditorWidget(QtWidgets.QWidget):
                 max_height = height
         if self._table_view.rowHeight(row) != max_height:
             self._table_view.setRowHeight(row, max_height)
+            if max_height == default_height:
+                self._custom_row_heights.pop(row, None)
+            else:
+                self._custom_row_heights[row] = max_height
+            self.table_state_changed.emit()
+
+    def table_state(self) -> dict:
+        col_count = self._model.columnCount()
+        columns = [self._table_view.columnWidth(col) for col in range(col_count)]
+        rows = [[row, height] for row, height in sorted(self._custom_row_heights.items())]
+        return {"columns": columns, "rows": rows}
+
+    def apply_table_state(self, state: dict) -> None:
+        if not state:
+            return
+        columns = state.get("columns")
+        if isinstance(columns, list):
+            col_count = self._model.columnCount()
+            for col, width in enumerate(columns):
+                if col >= col_count:
+                    break
+                if isinstance(width, int) and width > 0:
+                    self._table_view.setColumnWidth(col, width)
+        rows = state.get("rows")
+        if isinstance(rows, list):
+            row_count = self._model.rowCount()
+            for item in rows:
+                if (
+                    isinstance(item, (list, tuple))
+                    and len(item) == 2
+                    and isinstance(item[0], int)
+                    and isinstance(item[1], int)
+                ):
+                    row, height = item
+                    if 0 <= row < row_count and height > 0:
+                        self._table_view.setRowHeight(row, height)
+                        self._custom_row_heights[row] = height
 
     def _snapshot(self) -> CsvDocument:
         header = list(self._document.header)

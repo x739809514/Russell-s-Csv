@@ -153,8 +153,10 @@ class MainWindow(QtWidgets.QMainWindow):
         editor.cell_selected.connect(
             lambda row, col, value, ed=editor: self._cell_panel.update_cell(ed, row, col, value)
         )
+        editor.table_state_changed.connect(lambda ed=editor: self._persist_table_state(ed))
         self._open_documents[path] = editor
 
+        self._restore_table_state(editor)
         self._show_tab(editor)
         self._persist_session_state()
         editor._table_view.selectionModel().selectionChanged.connect(
@@ -852,6 +854,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._open_documents.pop(old_path, None)
                 self._open_documents[path] = editor
                 self._update_list_item_path(old_path, path)
+                self._move_table_state(old_path, path)
                 if self._current_path == old_path:
                     self._current_path = path
                 self._unwatch_file(old_path)
@@ -872,6 +875,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if not self._confirm_discard(editor):
                     event.ignore()
                     return
+        self._persist_all_table_states()
         self._persist_session_state()
         event.accept()
 
@@ -930,6 +934,38 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings.setValue("last_open_files", list(self._open_documents.keys()))
         self._settings.setValue("last_current_file", self._current_path or "")
         self._settings.setValue("last_selected_files", self._selected_paths())
+        self._persist_all_table_states()
+
+    def _table_state_key(self, path: str) -> str:
+        return f"table_state::{path}"
+
+    def _persist_table_state(self, editor: EditorWidget) -> None:
+        path = editor.document.path
+        if not path:
+            return
+        self._settings.setValue(self._table_state_key(path), editor.table_state())
+
+    def _persist_all_table_states(self) -> None:
+        for editor in self._open_documents.values():
+            self._persist_table_state(editor)
+
+    def _restore_table_state(self, editor: EditorWidget) -> None:
+        path = editor.document.path
+        if not path:
+            return
+        state = self._settings.value(self._table_state_key(path), {}, type=dict)
+        if isinstance(state, dict):
+            editor.apply_table_state(state)
+
+    def _move_table_state(self, old_path: str, new_path: str) -> None:
+        if not old_path or not new_path or old_path == new_path:
+            return
+        old_key = self._table_state_key(old_path)
+        new_key = self._table_state_key(new_path)
+        state = self._settings.value(old_key, {}, type=dict)
+        if isinstance(state, dict) and state:
+            self._settings.setValue(new_key, state)
+        self._settings.remove(old_key)
 
     def _on_auto_save_toggled(self, checked: bool) -> None:
         self._auto_save_enabled = bool(checked)
