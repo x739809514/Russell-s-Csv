@@ -137,6 +137,8 @@ class EditorWidget(QtWidgets.QWidget):
         self._model.rowsRemoved.connect(lambda *_: self._on_model_changed())
         self._model.columnsInserted.connect(lambda *_: self._on_model_changed())
         self._model.columnsRemoved.connect(lambda *_: self._on_model_changed())
+        self._model.rowsInserted.connect(lambda *_: self.table_state_changed.emit())
+        self._model.rowsRemoved.connect(lambda *_: self.table_state_changed.emit())
         self._push_history()
 
         if raw_text is not None:
@@ -344,7 +346,8 @@ class EditorWidget(QtWidgets.QWidget):
         col_count = self._model.columnCount()
         columns = [self._table_view.columnWidth(col) for col in range(col_count)]
         rows = [[row, height] for row, height in sorted(self._custom_row_heights.items())]
-        return {"columns": columns, "rows": rows}
+        row_colors = [[row, color] for row, color in sorted(self._model.row_colors().items())]
+        return {"columns": columns, "rows": rows, "row_colors": row_colors}
 
     def apply_table_state(self, state: dict) -> None:
         if not state:
@@ -371,6 +374,15 @@ class EditorWidget(QtWidgets.QWidget):
                     if 0 <= row < row_count and height > 0:
                         self._table_view.setRowHeight(row, height)
                         self._custom_row_heights[row] = height
+        row_colors = state.get("row_colors")
+        if isinstance(row_colors, list):
+            mapping: dict[int, str] = {}
+            for item in row_colors:
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    row, color = item
+                    if isinstance(row, int) and isinstance(color, str):
+                        mapping[row] = color
+            self._model.set_row_colors(mapping)
 
     def _snapshot(self) -> CsvDocument:
         header = list(self._document.header)
@@ -572,11 +584,51 @@ class EditorWidget(QtWidgets.QWidget):
         insert_above = menu.addAction("Insert Row Above")
         insert_below = menu.addAction("Insert Row Below")
         delete_row = menu.addAction("Delete Row")
+        menu.addSeparator()
+        mark_row = menu.addAction("Mark Row Color...")
+        clear_mark = menu.addAction("Clear Row Color")
         insert_above.triggered.connect(lambda: self._insert_row_at(row))
         insert_below.triggered.connect(lambda: self._insert_row_at(row + 1))
         delete_row.triggered.connect(lambda: self._delete_row_at(row))
+        mark_row.triggered.connect(lambda: self._mark_rows_with_color(row))
+        clear_mark.triggered.connect(lambda: self._clear_row_colors(row))
         delete_row.setEnabled(row >= 0)
+        mark_row.setEnabled(row >= 0)
+        clear_mark.setEnabled(row >= 0)
         menu.exec(self._table_view.verticalHeader().mapToGlobal(position))
+
+    def _target_rows_for_menu(self, row: int) -> List[int]:
+        selection = self._table_view.selectionModel().selectedIndexes()
+        rows = sorted({idx.row() for idx in selection})
+        if rows:
+            return rows
+        if row >= 0:
+            return [row]
+        return []
+
+    def _mark_rows_with_color(self, row: int) -> None:
+        rows = self._target_rows_for_menu(row)
+        if not rows:
+            return
+        current_color = self._model.row_colors().get(rows[0])
+        initial = QtGui.QColor(current_color) if current_color else QtGui.QColor()
+        color = QtWidgets.QColorDialog.getColor(
+            initial, self, "Choose Row Color", QtWidgets.QColorDialog.ColorDialogOption.ShowAlphaChannel
+        )
+        if not color.isValid():
+            return
+        color_text = color.name(QtGui.QColor.NameFormat.HexArgb)
+        for target in rows:
+            self._model.set_row_color(target, color_text)
+        self.table_state_changed.emit()
+
+    def _clear_row_colors(self, row: int) -> None:
+        rows = self._target_rows_for_menu(row)
+        if not rows:
+            return
+        for target in rows:
+            self._model.set_row_color(target, None)
+        self.table_state_changed.emit()
 
     def _show_col_header_menu(self, position: QtCore.QPoint) -> None:
         col = self._table_view.horizontalHeader().logicalIndexAt(position)
