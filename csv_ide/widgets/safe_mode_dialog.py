@@ -25,15 +25,22 @@ class SafeModeDialog(QtWidgets.QDialog):
         self._interval_spin.setRange(1, 1440)
         self._interval_spin.setSuffix(" min")
 
+        retention_label = QtWidgets.QLabel("Keep backups (days):", self)
+        self._retention_spin = QtWidgets.QSpinBox(self)
+        self._retention_spin.setRange(1, 3650)
+        self._retention_spin.setSuffix(" days")
+
         path_label = QtWidgets.QLabel("Backup folder:", self)
         self._path_input = QtWidgets.QLineEdit(self)
         self._browse_btn = QtWidgets.QPushButton("Browse...", self)
 
         form.addWidget(interval_label, 0, 0)
         form.addWidget(self._interval_spin, 0, 1)
-        form.addWidget(path_label, 1, 0)
-        form.addWidget(self._path_input, 1, 1)
-        form.addWidget(self._browse_btn, 1, 2)
+        form.addWidget(retention_label, 1, 0)
+        form.addWidget(self._retention_spin, 1, 1)
+        form.addWidget(path_label, 2, 0)
+        form.addWidget(self._path_input, 2, 1)
+        form.addWidget(self._browse_btn, 2, 2)
         layout.addLayout(form)
 
         files_label = QtWidgets.QLabel("Safe mode files:", self)
@@ -84,6 +91,7 @@ class SafeModeDialog(QtWidgets.QDialog):
 
         self._browse_btn.clicked.connect(self._choose_folder)
         self._interval_spin.valueChanged.connect(self._persist_settings)
+        self._retention_spin.valueChanged.connect(self._persist_settings)
         self._path_input.editingFinished.connect(self._persist_settings)
         self._add_selected_btn.clicked.connect(self._add_selected_files)
         self._add_file_btn.clicked.connect(self._add_files_via_dialog)
@@ -101,11 +109,13 @@ class SafeModeDialog(QtWidgets.QDialog):
 
     def _load_settings(self) -> None:
         interval = self._settings.value("safe_mode_interval_min", 5, type=int)
+        retention = self._settings.value("safe_mode_retention_days", 7, type=int)
         backup_path = self._settings.value("safe_mode_backup_path", "", type=str)
         files = self._settings.value("safe_mode_files", [], type=list)
         log = self._settings.value("safe_mode_backup_log", [], type=list)
 
         self._interval_spin.setValue(max(1, int(interval)))
+        self._retention_spin.setValue(max(1, int(retention)))
         self._path_input.setText(backup_path)
         self._set_file_list([path for path in files if isinstance(path, str)])
         self.refresh_log([entry for entry in log if isinstance(entry, str)])
@@ -182,10 +192,12 @@ class SafeModeDialog(QtWidgets.QDialog):
 
     def _persist_settings(self) -> None:
         interval = int(self._interval_spin.value())
+        retention = int(self._retention_spin.value())
         backup_path = self._path_input.text().strip()
         files = self._current_files()
 
         self._settings.setValue("safe_mode_interval_min", interval)
+        self._settings.setValue("safe_mode_retention_days", retention)
         self._settings.setValue("safe_mode_backup_path", backup_path)
         self._settings.setValue("safe_mode_files", files)
         self._main_window._configure_safe_mode_timer()

@@ -6,7 +6,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -102,6 +102,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.open_folder(self._root_path)
         self._restore_session_state()
         self._configure_safe_mode_timer()
+        self._prune_safe_mode_backups()
         app = QtWidgets.QApplication.instance()
         if app is not None:
             app.applicationStateChanged.connect(self._on_application_state_changed)
@@ -1222,6 +1223,40 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self._status_bar.showMessage("Safe Mode: no backups created")
 
+    def _prune_safe_mode_backups(self) -> None:
+        retention = self._settings.value("safe_mode_retention_days", 7, type=int)
+        backup_path = self._settings.value("safe_mode_backup_path", "", type=str).strip()
+        if retention <= 0 or not backup_path:
+            return
+        try:
+            entries = os.listdir(backup_path)
+        except OSError:
+            return
+        cutoff = datetime.now() - timedelta(days=retention)
+        deleted: list[str] = []
+        for filename in entries:
+            file_path = os.path.join(backup_path, filename)
+            if not os.path.isfile(file_path):
+                continue
+            stamp = self._backup_timestamp_from_name(filename)
+            if stamp is None or stamp >= cutoff:
+                continue
+            try:
+                os.remove(file_path)
+            except OSError:
+                continue
+            deleted.append(file_path)
+        if not deleted:
+            return
+        history = self._settings.value("safe_mode_backup_log", [], type=list)
+        history = [entry for entry in history if isinstance(entry, str)]
+        removed = {path for path in deleted if isinstance(path, str)}
+        history = [entry for entry in history if self._backup_entry_path(entry) not in removed]
+        self._settings.setValue("safe_mode_backup_log", history)
+        if self._safe_mode_dialog is not None:
+            self._safe_mode_dialog.refresh_log(history)
+        self._status_bar.showMessage(f"Safe Mode: cleaned up {len(deleted)} old backup(s)")
+
     def _restore_safe_mode_backup(self, backup_path: str) -> None:
         if not os.path.exists(backup_path):
             QtWidgets.QMessageBox.warning(self, "Restore failed", "Backup file not found.")
@@ -1270,6 +1305,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if " -> " not in entry:
             return ""
         return entry.split(" -> ", 1)[1].strip()
+
+    def _backup_timestamp_from_name(self, filename: str) -> Optional[datetime]:
+        match = re.search(r"(\d{8}_\d{6})", filename)
+        if not match:
+            return None
+        try:
+            return datetime.strptime(match.group(1), "%Y%m%d_%H%M%S")
+        except ValueError:
+            return None
 
     def _relations_path(self) -> str:
         root = self._root_path or QtCore.QDir.currentPath()
