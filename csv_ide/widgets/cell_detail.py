@@ -1,3 +1,4 @@
+import re
 from typing import Optional, TYPE_CHECKING
 
 from PyQt6 import QtCore, QtWidgets
@@ -79,12 +80,25 @@ class CellDetailPanel(QtWidgets.QWidget):
             if base_text is None:
                 return
             base_text = str(base_text).strip()
-            if not base_text.isdigit():
-                return
-            base = int(base_text)
+            if base_text.isdigit():
+                prefix = ""
+                base_num = int(base_text)
+                width = 0
+            else:
+                match = re.match(r"^(.*?)(\d+)$", base_text)
+                if not match:
+                    return
+                prefix = match.group(1)
+                base_num = int(match.group(2))
+                width = len(match.group(2))
             for offset, index in enumerate(ordered):
                 if index.isValid():
-                    self._editor._model.setData(index, str(base + offset))
+                    value = base_num + offset
+                    if width:
+                        value_text = f"{prefix}{str(value).zfill(width)}"
+                    else:
+                        value_text = str(value)
+                    self._editor._model.setData(index, value_text)
             return
         new_value = self._value_edit.toPlainText()
         for index in targets:
