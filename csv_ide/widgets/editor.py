@@ -1,5 +1,6 @@
 import csv
 import io
+import re
 from typing import List, Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -699,6 +700,20 @@ class EditorWidget(QtWidgets.QWidget):
             return text in value
         return text.lower() in value.lower()
 
+    def _grid_replace(
+        self,
+        value: str,
+        find_text: str,
+        replace_text: str,
+        case_sensitive: bool,
+        count: int = 0,
+    ) -> tuple[str, int]:
+        if not find_text:
+            return value, 0
+        flags = 0 if case_sensitive else re.IGNORECASE
+        pattern = re.escape(find_text)
+        return re.subn(pattern, lambda _match: replace_text, value, count=count, flags=flags)
+
     def _iter_cells(self):
         rows = len(self._document.rows)
         cols = len(self._document.header)
@@ -778,13 +793,24 @@ class EditorWidget(QtWidgets.QWidget):
         if current.isValid():
             value = self._cell_text(current.row(), current.column())
             if self._grid_match(value, find_text, case_sensitive):
-                self._model.setData(current, replace_text)
-                return True
+                new_value, num = self._grid_replace(
+                    value, find_text, replace_text, case_sensitive, count=1
+                )
+                if num:
+                    self._model.setData(current, new_value)
+                    if not self._grid_match(new_value, find_text, case_sensitive):
+                        self.find_next_in_grid(find_text, case_sensitive)
+                    return True
         if self.find_next_in_grid(find_text, case_sensitive):
             current = self._table_view.selectionModel().currentIndex()
             if current.isValid():
-                self._model.setData(current, replace_text)
-                return True
+                value = self._cell_text(current.row(), current.column())
+                new_value, num = self._grid_replace(
+                    value, find_text, replace_text, case_sensitive, count=1
+                )
+                if num:
+                    self._model.setData(current, new_value)
+                    return True
         return False
 
     def replace_all_in_grid(
@@ -799,6 +825,10 @@ class EditorWidget(QtWidgets.QWidget):
             value = self._cell_text(row, col)
             if self._grid_match(value, find_text, case_sensitive):
                 index = self._model.index(row, col)
-                self._model.setData(index, replace_text)
-                count += 1
+                new_value, num = self._grid_replace(
+                    value, find_text, replace_text, case_sensitive
+                )
+                if num:
+                    self._model.setData(index, new_value)
+                    count += num
         return count
