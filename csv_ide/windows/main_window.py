@@ -93,6 +93,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._auto_save_debounce_timer.timeout.connect(self._auto_save_all)
         self._file_watcher = QtCore.QFileSystemWatcher(self)
         self._file_watcher.fileChanged.connect(self._on_watched_file_changed)
+        self._file_watcher.directoryChanged.connect(self._on_watched_directory_changed)
+        self._watched_directories: set[str] = set()
+        self._directory_change_timer = QtCore.QTimer(self)
+        self._directory_change_timer.setSingleShot(True)
+        self._directory_change_timer.setInterval(200)
+        self._directory_change_timer.timeout.connect(self._refresh_file_list)
         self._file_mtimes: dict[str, float] = {}
         self._file_change_timers: dict[str, QtCore.QTimer] = {}
         self._file_comments = self._load_file_comments()
@@ -888,17 +894,48 @@ class MainWindow(QtWidgets.QMainWindow):
     def _populate_file_list(self, root_path: str) -> None:
         self._file_list.clear()
         entries: list[tuple[str, str]] = []
+        directories: set[str] = set()
         for root, _, files in os.walk(root_path):
+            directories.add(root)
             for name in files:
                 _, ext = os.path.splitext(name)
                 if ext.lower() in {".csv", ".tsv"}:
                     full_path = os.path.join(root, name)
                     entries.append((name, full_path))
+        stale = self._watched_directories - directories
+        if stale:
+            self._file_watcher.removePaths(list(stale))
+        self._watched_directories = set(self._file_watcher.directories()) - stale
+        new = directories - self._watched_directories
+        if new:
+            self._file_watcher.addPaths(list(new))
+        self._watched_directories = set(self._file_watcher.directories())
         for name, full_path in sorted(entries, key=lambda item: item[0].lower()):
             item = QtWidgets.QListWidgetItem(name)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, full_path)
             item.setToolTip(self._item_tooltip(full_path))
             self._file_list.addItem(item)
+        self._filter_file_list(self._search_input.text())
+
+    def _on_watched_directory_changed(self, _path: str) -> None:
+        self._directory_change_timer.start()
+
+    def _refresh_file_list(self) -> None:
+        selected = self._selected_paths()
+        current = self._file_list.currentItem()
+        current_path = current.data(QtCore.Qt.ItemDataRole.UserRole) if current else None
+        scrollbar = self._file_list.verticalScrollBar()
+        scroll = scrollbar.value() if scrollbar is not None else 0
+        self._file_list.blockSignals(True)
+        try:
+            self._populate_file_list(self._root_path)
+            self._select_paths(selected)
+            if isinstance(current_path, str):
+                self._select_path(current_path)
+            if scrollbar is not None:
+                scrollbar.setValue(scroll)
+        finally:
+            self._file_list.blockSignals(False)
 
     def _filter_file_list(self, text: str) -> None:
         text = text.strip().lower()
