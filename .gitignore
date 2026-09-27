@@ -1,3 +1,7 @@
-.venv
-csv_ide/__pycache__/
-csv_ide/widgets/__pycache__/
+.venv/
+.build-venv/
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc

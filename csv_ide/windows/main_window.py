@@ -77,7 +77,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._status_bar.showMessage("Ready")
 
         self._open_documents: dict[str, EditorWidget] = {}
-        self._root_path = QtCore.QDir.currentPath()
+        self._root_path = (
+            QtCore.QDir.homePath() if getattr(sys, "frozen", False) else QtCore.QDir.currentPath()
+        )
         self._right_tabs = right_panel
         self._current_path: Optional[str] = None
         self._ignore_selection_change = False
